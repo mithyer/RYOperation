@@ -74,6 +74,10 @@ extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispat
 
 @implementation RYDependencyRelation
 
+- (NSString *)description {
+    return [NSString stringWithFormat:@"%@ %p -> demander:%@, relier:%@, semaphore:%@", self.class, self, _demander, _relier, _semaphore];
+}
+
 @end
 
 
@@ -109,7 +113,7 @@ extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispat
     if (self = [super init]) {
         _relation_table = [NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory];
         _relation_table.pointerFunctions.isEqualFunction = _dependency_table_pointerFunctions_isEqualFunction;
-        _handleBlock = [block copy];
+        _handleBlock = block;
         _isReady = YES;
     }
     return self;
@@ -259,6 +263,9 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
     __weak typeof(self) wSelf = self;
     ry_lock(self, kRelationLock, NO, ^{
         __strong typeof(wSelf) sSelf = wSelf;
+        if (sSelf->_isFinished) {
+            return;
+        }
         
         if (!sSelf->_isCanceled) {
             sSelf->_isExcuting = YES;
@@ -272,16 +279,21 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
             if (nil != sSelf->_handleBlock && !sSelf->_isCanceled) {
                 sSelf->_handleBlock();
             }
-            sSelf->_isExcuting = NO;
         }
         
         NSArray<RYDependencyRelation *> *isRelierRelations =  sSelf.isRelierRelations;
         dispatch_apply(isRelierRelations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
             dispatch_semaphore_signal(isRelierRelations[index].semaphore);
         });
+        
+        sSelf->_isExcuting = NO;
+        sSelf->_isFinished = YES;
     });
 }
 
+- (NSString *)description {
+    return [NSString stringWithFormat:@"<%@ %p %@>", self.class, self, _name];
+}
 
 @end
 
@@ -314,14 +326,14 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 - (instancetype)init {
     if (self = [super init]) {
         __weak typeof(self) wSelf = self;
-        _excuteBlock = [^RYQuene *{
+        _excuteBlock = ^RYQuene *{
             __strong typeof(wSelf) sSelf = wSelf;
             if (nil != sSelf->_beforeExcuteBlock) {
                 sSelf->_beforeExcuteBlock();
             }
             [sSelf excuteStart];
             return sSelf;
-        } copy];
+        };
     }
     return self;
 }
@@ -380,7 +392,7 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 - (RYQuene *(^)(dispatch_block_t))setBeforeExcuteBlock {
     return ^RYQuene* (dispatch_block_t beforeBlock) {
         if (nil != beforeBlock) {
-            _beforeExcuteBlock = [beforeBlock copy];
+            _beforeExcuteBlock = beforeBlock;
         }
         return self;
     };
@@ -389,7 +401,7 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 - (RYQuene *(^)(dispatch_block_t))setExcuteDoneBlock {
     return ^RYQuene* (dispatch_block_t doneBlock) {
         if (nil != doneBlock) {
-            _excuteDoneBlock = [doneBlock copy];
+            _excuteDoneBlock = doneBlock;
         }
         return self;
     };
