@@ -83,8 +83,8 @@ extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispat
 
 @implementation RYOperation {
     @private
-    void (^_handleBlock)();
-    
+    void (^_operationBlock)();
+
     NSHashTable<RYDependencyRelation *> *_relation_table;
     
     NSString* _name;
@@ -99,21 +99,32 @@ extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispat
     __weak RYQuene *_quene;
 }
 
-+ (RYOperation *(^)(dispatch_block_t))create {
++ (RYOperation *)create {
+    return self.new;
+}
+
++ (RYOperation *(^)(dispatch_block_t))createWithBlock {
     return ^RYOperation *(dispatch_block_t optBlock) {
         if (nil != optBlock) {
-            RYOperation *opt = [[RYOperation alloc] initWithBlock:optBlock];
+            RYOperation *opt = RYOperation.create;
+            opt.setBlock(optBlock);
             return opt;
         }
         return nil;
     };
 }
 
-- (instancetype)initWithBlock:(dispatch_block_t)block {
+- (RYOperation *(^)(dispatch_block_t))setBlock {
+    return ^RYOperation *(dispatch_block_t optBlock) {
+        _operationBlock = optBlock;
+        return self;
+    };
+}
+
+- (instancetype)init {
     if (self = [super init]) {
         _relation_table = [NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory];
         _relation_table.pointerFunctions.isEqualFunction = _dependency_table_pointerFunctions_isEqualFunction;
-        _handleBlock = block;
         _isReady = YES;
     }
     return self;
@@ -144,9 +155,6 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 }
 
 - (void)cancel {
-    if (_isExcuting) {
-        return;
-    }
     _isCanceled = YES;
 }
 
@@ -259,11 +267,11 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
     return [allObjects filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"%K == %@", NSStringFromSelector(@selector(relier)), self]];
 }
 
-- (void)excute {
+- (void)excute:(dispatch_block_t)completedBlock {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, NO, ^{
+    ry_lock(self, kRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
-        if (sSelf->_isFinished) {
+        if (sSelf->_isFinished || sSelf->_isExcuting) {
             return;
         }
         
@@ -272,12 +280,13 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
             NSArray<RYDependencyRelation *> *isDemanderRelations = sSelf.isDemanderRelations;
             dispatch_apply(isDemanderRelations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
                 RYDependencyRelation *relation = isDemanderRelations[index];
-                if (!relation.relier->_isCanceled) {
-                    dispatch_semaphore_wait(isDemanderRelations[index].semaphore, DISPATCH_TIME_FOREVER);
+                dispatch_semaphore_wait(isDemanderRelations[index].semaphore, DISPATCH_TIME_FOREVER);
+                if (relation.relier->_isCanceled) {
+                    sSelf->_isCanceled = YES;
                 }
             });
-            if (nil != sSelf->_handleBlock && !sSelf->_isCanceled) {
-                sSelf->_handleBlock();
+            if (nil != sSelf->_operationBlock && !sSelf->_isCanceled) {
+                sSelf->_operationBlock();
             }
         }
         
@@ -288,6 +297,10 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
         
         sSelf->_isExcuting = NO;
         sSelf->_isFinished = YES;
+        
+        if (nil != completedBlock) {
+            completedBlock();
+        }
     });
 }
 
@@ -309,6 +322,7 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
     RYQuene *(^_excuteBlock)();
     dispatch_block_t _beforeExcuteBlock;
     dispatch_block_t _excuteDoneBlock;
+    OperationWillStartBlock _operationWillStartBlock;
     __weak dispatch_queue_t _excuteQuene;
 
     NSMutableSet<RYOperation *> *_operationSet;
@@ -320,7 +334,23 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 }
 
 + (RYQuene *)create {
-    return [[self alloc] init];
+    return self.new;
+}
+
++ (RYQuene *(^)(RYOperation *))createWithOperation {
+    return ^RYQuene* (RYOperation *operation) {
+        RYQuene *quene = self.create;
+        quene.addOperation(operation);
+        return quene;
+    };
+}
+
++ (RYQuene *(^)(NSArray<RYOperation *> *))createWithOperations {
+    return ^RYQuene* (NSArray<RYOperation *> *operations) {
+        RYQuene *quene = self.create;
+        quene.addOperations(operations);
+        return quene;
+    };
 }
 
 - (instancetype)init {
@@ -353,11 +383,13 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
             if (nil == sSelf->_operationSet) {
                 sSelf->_operationSet = [NSMutableSet set];
             }
-            [sSelf->_operationSet addObjectsFromArray:operations];
-            for (RYOperation *opt in operations) {
-                NSCParameterAssert(opt->_quene == nil);
-                opt->_quene = sSelf;
-            }
+            ry_lock(self, kQueneExcuteLock, NO, ^{
+                [sSelf->_operationSet addObjectsFromArray:operations];
+                for (RYOperation *opt in operations) {
+                    NSCParameterAssert(opt->_quene == nil);
+                    opt->_quene = sSelf;
+                }
+            });
         });
         return self;
     };
@@ -391,18 +423,21 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 
 - (RYQuene *(^)(dispatch_block_t))setBeforeExcuteBlock {
     return ^RYQuene* (dispatch_block_t beforeBlock) {
-        if (nil != beforeBlock) {
-            _beforeExcuteBlock = beforeBlock;
-        }
+        _beforeExcuteBlock = beforeBlock;
         return self;
     };
 }
 
 - (RYQuene *(^)(dispatch_block_t))setExcuteDoneBlock {
     return ^RYQuene* (dispatch_block_t doneBlock) {
-        if (nil != doneBlock) {
-            _excuteDoneBlock = doneBlock;
-        }
+        _excuteDoneBlock = doneBlock;
+        return self;
+    };
+}
+
+- (RYQuene *(^)(OperationWillStartBlock))setOperationWillStartBlock {
+    return ^RYQuene* (OperationWillStartBlock willStartBlock) {
+        _operationWillStartBlock = willStartBlock;
         return self;
     };
 }
@@ -451,14 +486,21 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
             sSelf->_isExcuting = YES;
             NSArray<RYOperation *> *sortedNotDemanderArray = [notDemanderSet sortedArrayUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:NSStringFromSelector(@selector(priority)) ascending:NO]]];
             
-            dispatch_semaphore_t excute_semp = dispatch_semaphore_create(sSelf.maxConcurrentOperationCount);
-            sSelf->_handle_concurrent_semaphore = excute_semp;
+            dispatch_semaphore_t excute_max_operation_count_semp = dispatch_semaphore_create(sSelf.maxConcurrentOperationCount);
+            sSelf->_handle_concurrent_semaphore = excute_max_operation_count_semp;
             dispatch_queue_t excute_quene = CREATE_DISPATCH_CONCURRENT_QUEUE(wSelf);
+            
+            dispatch_semaphore_t excute_done_semp = dispatch_semaphore_create(0);
             
             static void (^handleExcute)(RYOperation *);
             if (nil == handleExcute) {
                 handleExcute = ^(RYOperation *opt) {
-                    [opt excute];
+                    if (nil != sSelf->_operationWillStartBlock) {
+                        sSelf->_operationWillStartBlock(opt);
+                    }
+                    [opt excute:^{
+                        dispatch_semaphore_signal(excute_done_semp);
+                    }];
                     NSArray<RYDependencyRelation *> *relations = opt.isRelierRelations;
                     [relations enumerateObjectsUsingBlock:^(RYDependencyRelation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
                         if (nil != obj.demander) {
@@ -469,10 +511,14 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
             }
             
             dispatch_apply(notDemanderSet.count, excute_quene, ^(size_t index) {
-                dispatch_semaphore_wait(excute_semp, DISPATCH_TIME_FOREVER);
+                dispatch_semaphore_wait(excute_max_operation_count_semp, DISPATCH_TIME_FOREVER);
                 handleExcute(sortedNotDemanderArray[index]);
-                dispatch_semaphore_signal(excute_semp);
+                dispatch_semaphore_signal(excute_max_operation_count_semp);
             });
+            
+            for (NSUInteger i = 0; i < sSelf->_operationSet.count; ++i) {
+                dispatch_semaphore_wait(excute_done_semp, DISPATCH_TIME_FOREVER);
+            }
             
             sSelf->_isExcuting = NO;
             sSelf->_isFinished = YES;
@@ -487,7 +533,7 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
     return _excuteBlock;
 }
 
-- (void)cancelAllOperations {
+- (void)cancel {
     if (_isCancelled) {
         return;
     }
