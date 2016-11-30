@@ -25,7 +25,7 @@ enum {
     kQueneExcuteOperationFirstLock,
 };
 
-extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock) {
+dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock) {
     if (nil == lockedBlock) {
         return nil;
     }

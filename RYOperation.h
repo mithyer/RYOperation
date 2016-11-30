@@ -16,6 +16,7 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
     kRYOperationPriorityVeryHigh = 1000,
 };
 
+
 @class RYQuene;
 @interface RYOperation : NSObject
 
@@ -39,6 +40,7 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 - (BOOL)isFinished;
 
 @end
+
 
 typedef void (^OperationWillStartBlock)(RYOperation *);
 
@@ -65,5 +67,4 @@ typedef void (^OperationWillStartBlock)(RYOperation *);
 
 @end
 
-
-dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock);
+extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock);
