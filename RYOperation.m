@@ -74,6 +74,18 @@ extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispat
 
 @implementation RYDependencyRelation
 
+- (NSUInteger)hash {
+    return ((NSUInteger)self.demander) ^ ((NSUInteger)self.relier);
+}
+
+- (BOOL)isEqual:(id)object {
+    if ([object class] == [self class]) {
+        RYDependencyRelation *relation = object;
+        return relation.demander == self.demander && relation.relier == self.relier;
+    }
+    return NO;
+}
+
 - (NSString *)description {
     return [NSString stringWithFormat:@"%@ %p -> demander:%@, relier:%@, semaphore:%@", self.class, self, _demander, _relier, _semaphore];
 }
@@ -85,7 +97,7 @@ extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispat
     @private
     void (^_operationBlock)();
 
-    NSHashTable<RYDependencyRelation *> *_relation_table;
+    NSMutableSet<RYDependencyRelation *> *_relation_set;
     
     NSString* _name;
     RYOperationPriority _priority;
@@ -123,27 +135,25 @@ extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispat
 
 - (instancetype)init {
     if (self = [super init]) {
-        _relation_table = [NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory];
-        _relation_table.pointerFunctions.isEqualFunction = _dependency_table_pointerFunctions_isEqualFunction;
+        _relation_set = [NSMutableSet set];
         _isReady = YES;
     }
     return self;
-}
-
-static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1, const void*item2, NSUInteger (* _Nullable size)(const void *item)) {
-    if (size(item1) != size(item2)) {
-        return NO;
-    }
-    RYDependencyRelation *dep1 = (__bridge RYDependencyRelation *)item1;
-    RYDependencyRelation *dep2 = (__bridge RYDependencyRelation *)item2;
-    return dep1.demander == dep2.demander && dep1.relier == dep2.relier;
 }
 
 - (void)addRelation:(RYDependencyRelation *)relation {
     __weak typeof(self) wSelf = self;
     ry_lock(self, kRelationLock, NO, ^{
         __strong typeof(wSelf) sSelf = wSelf;
-        [sSelf->_relation_table addObject:relation];
+        [sSelf->_relation_set addObject:relation];
+    });
+}
+
+- (void)removeRelation:(RYDependencyRelation *)relation {
+    __weak typeof(self) wSelf = self;
+    ry_lock(self, kRelationLock, NO, ^{
+        __strong typeof(wSelf) sSelf = wSelf;
+        [sSelf->_relation_set removeObject:relation];
     });
 }
 
@@ -180,6 +190,10 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 
 - (RYOperationPriority)priority { // for NSPredicate
     return _priority;
+}
+
+- (NSSet<RYOperation *> *)allDependencies {
+    return [_relation_set valueForKey:NSStringFromSelector(@selector(relier))];
 }
 
 
@@ -244,6 +258,27 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
     };
 }
 
+- (RYOperation *(^)(RYOperation *))removeDependency {
+    return ^RYOperation *(RYOperation *operation) {
+        NSArray<RYDependencyRelation *> *allRelations = _relation_set.allObjects;
+        RYDependencyRelation *relation = [allRelations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"%K == %@ && %K == %@", NSStringFromSelector(@selector(demander)), self,NSStringFromSelector(@selector(relier)), operation]].firstObject;
+        if (nil != relation) {
+            [relation.relier removeRelation:relation];
+            [relation.demander removeRelation:relation];
+        }
+        return self;
+    };
+}
+
+- (RYOperation *)removeAllDependencies {
+    __weak typeof(self) wSelf = self;
+    ry_lock(self, kRelationLock, NO, ^{
+        __strong typeof(wSelf) sSelf = wSelf;
+        [sSelf->_relation_set removeAllObjects];
+    });
+    return self;
+}
+
 - (RYOperation *(^)(NSString *))setName {
     return ^RYOperation *(NSString *name) {
         _name = name ? name.copy : nil;
@@ -252,19 +287,19 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 }
 
 - (NSArray<RYDependencyRelation *> *)isDemanderRelations {
-    NSArray<RYDependencyRelation *> *allObjects = _relation_table.allObjects;
-    if (nil == allObjects || allObjects.count < 1) {
+    NSArray<RYDependencyRelation *> *allRelations = _relation_set.allObjects;
+    if (nil == allRelations || allRelations.count < 1) {
         return nil;
     }
-    return [allObjects filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"%K == %@", NSStringFromSelector(@selector(demander)), self]];
+    return [allRelations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"%K == %@", NSStringFromSelector(@selector(demander)), self]];
 }
 
 - (NSArray<RYDependencyRelation *> *)isRelierRelations {
-    NSArray<RYDependencyRelation *> *allObjects = _relation_table.allObjects;
-    if (nil == allObjects || allObjects.count < 1) {
+    NSArray<RYDependencyRelation *> *allRelations = _relation_set.allObjects;
+    if (nil == allRelations || allRelations.count < 1) {
         return nil;
     }
-    return [allObjects filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"%K == %@", NSStringFromSelector(@selector(relier)), self]];
+    return [allRelations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"%K == %@", NSStringFromSelector(@selector(relier)), self]];
 }
 
 - (void)excute:(dispatch_block_t)completedBlock {
@@ -474,7 +509,7 @@ static BOOL _dependency_table_pointerFunctions_isEqualFunction(const void *item1
 
 - (void)excuteStart {
     __weak typeof(self) wSelf = self;
-    _excuteQuene = ry_lock(self, kQueneExcuteLock, YES, ^{
+    _excuteQuene = ry_lock(self, kQueneExcuteLock, !_sync, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         if (sSelf->_isFinished || sSelf->_isExcuting || sSelf->_isCancelled) {
             return;

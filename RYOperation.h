@@ -23,10 +23,13 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 + (RYOperation *(^)(dispatch_block_t))createWithBlock;
 
 - (RYOperation *(^)(RYOperation *))addDependency;
+- (RYOperation *(^)(RYOperation *))removeDependency;
+- (RYOperation *)removeAllDependencies;
 - (RYOperation *(^)(dispatch_block_t))setBlock;
 - (RYOperation *(^)(NSString *))setName;
 - (RYOperation *(^)(RYOperationPriority))setPriority;
 
+- (NSSet<RYOperation *> *)allDependencies;
 - (void)cancel;
 
 - (NSString *)name;
