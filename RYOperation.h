@@ -16,6 +16,8 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
     kRYOperationPriorityVeryHigh = 1000,
 };
 
+#define RY_TIME_FOREVER DISPATCH_TIME_FOREVER
+#define RY_TIME_NOW DISPATCH_TIME_NOW
 
 @class RYQuene;
 @interface RYOperation : NSObject
@@ -29,6 +31,8 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 - (RYOperation *(^)(dispatch_block_t))setBlock;
 - (RYOperation *(^)(NSString *))setName;
 - (RYOperation *(^)(RYOperationPriority))setPriority;
+- (RYOperation *(^)(dispatch_time_t))setMaxWaitTimeForExcute; // default:RY_TIME_FOREVER
+- (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForExucte; // default:RY_TIME_NOW
 
 - (NSSet<RYOperation *> *)allDependencies;
 - (void)cancel;

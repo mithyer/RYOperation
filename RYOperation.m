@@ -21,8 +21,6 @@ enum {
     kQueneExcuteLock,
     kCancelAllOperationsLock,
     kSetMaxConcurrentOperationCountLock,
-    
-    kQueneExcuteOperationFirstLock,
 };
 
 dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock) {
@@ -102,6 +100,9 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     NSString* _name;
     RYOperationPriority _priority;
     
+    dispatch_time_t _maxWaitTimeForExcute;
+    dispatch_time_t _minusWaitTimeForExucte;
+    
     BOOL _isCanceled;
     BOOL _isReady;
     BOOL _isExcuting;
@@ -137,13 +138,15 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     if (self = [super init]) {
         _relation_set = [NSMutableSet set];
         _isReady = YES;
+        _maxWaitTimeForExcute = DISPATCH_TIME_FOREVER;
+        _minusWaitTimeForExucte = DISPATCH_TIME_NOW;
     }
     return self;
 }
 
 - (void)addRelation:(RYDependencyRelation *)relation {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, NO, ^{
+    ry_lock(self, kRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         [sSelf->_relation_set addObject:relation];
     });
@@ -151,7 +154,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (void)removeRelation:(RYDependencyRelation *)relation {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, NO, ^{
+    ry_lock(self, kRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         [sSelf->_relation_set removeObject:relation];
     });
@@ -272,7 +275,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (RYOperation *)removeAllDependencies {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, NO, ^{
+    ry_lock(self, kRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         [sSelf->_relation_set removeAllObjects];
     });
@@ -282,6 +285,30 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 - (RYOperation *(^)(NSString *))setName {
     return ^RYOperation *(NSString *name) {
         _name = name ? name.copy : nil;
+        return self;
+    };
+}
+
+- (RYOperation *(^)(dispatch_time_t))setMaxWaitTimeForExcute {
+    return ^RYOperation *(dispatch_time_t waitTime) {
+        __weak typeof(self) wSelf = self;
+        ry_lock(self, kRelationLock, YES, ^{
+            __strong typeof(wSelf) sSelf = wSelf;
+            sSelf->_maxWaitTimeForExcute = waitTime;
+        });
+        return self;
+    };
+}
+
+- (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForExucte {
+    return ^RYOperation *(dispatch_time_t waitTime) {
+        ry_lock(self, kRelationLock, YES, ^{
+            __weak typeof(self) wSelf = self;
+            ry_lock(self, kRelationLock, YES, ^{
+                __strong typeof(wSelf) sSelf = wSelf;
+                sSelf->_minusWaitTimeForExucte = waitTime;
+            });
+        });
         return self;
     };
 }
@@ -304,25 +331,35 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (void)excute:(dispatch_block_t)completedBlock {
     __weak typeof(self) wSelf = self;
+
     ry_lock(self, kRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         if (sSelf->_isFinished || sSelf->_isExcuting) {
             return;
         }
         
+        dispatch_semaphore_t minus_wait_semaphore = dispatch_semaphore_create(0);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sSelf->_minusWaitTimeForExucte)), CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^{
+            dispatch_semaphore_signal(minus_wait_semaphore);
+        });
+        
         if (!sSelf->_isCanceled) {
-            sSelf->_isExcuting = YES;
             NSArray<RYDependencyRelation *> *isDemanderRelations = sSelf.isDemanderRelations;
             dispatch_apply(isDemanderRelations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
                 RYDependencyRelation *relation = isDemanderRelations[index];
-                dispatch_semaphore_wait(isDemanderRelations[index].semaphore, DISPATCH_TIME_FOREVER);
+                dispatch_semaphore_wait(isDemanderRelations[index].semaphore, sSelf->_maxWaitTimeForExcute);
                 if (relation.relier->_isCanceled) {
                     sSelf->_isCanceled = YES;
                 }
             });
+            
+            dispatch_semaphore_wait(minus_wait_semaphore, DISPATCH_TIME_FOREVER);
             if (nil != sSelf->_operationBlock && !sSelf->_isCanceled) {
+                sSelf->_isExcuting = YES;
                 sSelf->_operationBlock();
             }
+            sSelf->_isExcuting = NO;
+            sSelf->_isFinished = YES;
         }
         
         NSArray<RYDependencyRelation *> *isRelierRelations =  sSelf.isRelierRelations;
@@ -330,8 +367,6 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             dispatch_semaphore_signal(isRelierRelations[index].semaphore);
         });
         
-        sSelf->_isExcuting = NO;
-        sSelf->_isFinished = YES;
         
         if (nil != completedBlock) {
             completedBlock();
