@@ -302,12 +302,10 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForExucte {
     return ^RYOperation *(dispatch_time_t waitTime) {
+        __weak typeof(self) wSelf = self;
         ry_lock(self, kRelationLock, YES, ^{
-            __weak typeof(self) wSelf = self;
-            ry_lock(self, kRelationLock, YES, ^{
-                __strong typeof(wSelf) sSelf = wSelf;
-                sSelf->_minusWaitTimeForExucte = waitTime;
-            });
+            __strong typeof(wSelf) sSelf = wSelf;
+            sSelf->_minusWaitTimeForExucte = waitTime;
         });
         return self;
     };
