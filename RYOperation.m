@@ -341,8 +341,10 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 }
 
 - (void)operate {
+    if (_isFinished || _isOperating) {
+        return;
+    }
     __weak typeof(self) wSelf = self;
-
     ry_lock(self, kRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         if (sSelf->_isFinished || sSelf->_isOperating) {
@@ -554,6 +556,9 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 }
 
 - (void)excuteStart {
+    if (_isFinished || _isExcuting || _isCancelled) {
+        return;
+    }
     __weak typeof(self) wSelf = self;
     _excuteQueue = ry_lock(self, kQueueExcuteLock, !_sync, ^{
         __strong typeof(wSelf) sSelf = wSelf;
@@ -622,6 +627,9 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     __weak typeof(self) wSelf = self;
     ry_lock(self, kCancelAllOperationsLock, NO, ^{
         __strong typeof(wSelf) sSelf = wSelf;
+        if (sSelf->_isCancelled) {
+            return;
+        }
         if (sSelf->_isExcuting && nil != sSelf->_excuteQueue) {
             dispatch_suspend(sSelf->_excuteQueue);
         }
