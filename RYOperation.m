@@ -9,7 +9,7 @@
 #import "RYOperation.h"
 #import <objc/runtime.h>
 
-#define DISPATCH_QUENE_LABEL(ID) [NSString stringWithFormat:@"quene_label: %@, line:%d, id:%@",[[NSString stringWithUTF8String:__FILE__] lastPathComponent], __LINE__, ID].UTF8String
+#define DISPATCH_QUENE_LABEL(ID) [NSString stringWithFormat:@"queue_label: %@, line:%d, id:%@",[[NSString stringWithUTF8String:__FILE__] lastPathComponent], __LINE__, ID].UTF8String
 #define CREATE_DISPATCH_SERIAL_QUEUE(ID) dispatch_queue_create(DISPATCH_QUENE_LABEL(ID), DISPATCH_QUEUE_SERIAL)
 #define CREATE_DISPATCH_CONCURRENT_QUEUE(ID) dispatch_queue_create(DISPATCH_QUENE_LABEL(ID), DISPATCH_QUEUE_CONCURRENT)
 
@@ -18,7 +18,7 @@
 enum {
     kRelationLock = 1000,
     kAddOperationLock,
-    kQueneExcuteLock,
+    kQueueExcuteLock,
     kCancelAllOperationsLock,
     kSetMaxConcurrentOperationCountLock,
 };
@@ -28,29 +28,29 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         return nil;
     }
     static dispatch_once_t once_t;
-    static dispatch_semaphore_t add_new_quene_semp;
+    static dispatch_semaphore_t add_new_queue_semp;
     dispatch_once(&once_t, ^{
-        add_new_quene_semp = dispatch_semaphore_create(1);
+        add_new_queue_semp = dispatch_semaphore_create(1);
     });
     
-    dispatch_semaphore_wait(add_new_quene_semp, DISPATCH_TIME_FOREVER);
+    dispatch_semaphore_wait(add_new_queue_semp, DISPATCH_TIME_FOREVER);
     
-    static void *seriral_quene_map_key = &seriral_quene_map_key;
-    NSMapTable<NSNumber *, dispatch_queue_t> * serial_quene_map = objc_getAssociatedObject(holder, seriral_quene_map_key);
-    if (nil == serial_quene_map) {
-        serial_quene_map = [NSMapTable mapTableWithKeyOptions:NSPointerFunctionsStrongMemory valueOptions:NSPointerFunctionsWeakMemory];
-        objc_setAssociatedObject(holder ,seriral_quene_map_key, serial_quene_map, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    static void *seriral_queue_map_key = &seriral_queue_map_key;
+    NSMapTable<NSNumber *, dispatch_queue_t> * serial_queue_map = objc_getAssociatedObject(holder, seriral_queue_map_key);
+    if (nil == serial_queue_map) {
+        serial_queue_map = [NSMapTable mapTableWithKeyOptions:NSPointerFunctionsStrongMemory valueOptions:NSPointerFunctionsWeakMemory];
+        objc_setAssociatedObject(holder ,seriral_queue_map_key, serial_queue_map, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    dispatch_queue_t serial_quene = [serial_quene_map objectForKey:@(lockId)];
-    if (nil == serial_quene) {
+    dispatch_queue_t serial_queue = [serial_queue_map objectForKey:@(lockId)];
+    if (nil == serial_queue) {
         NSString *identifier = [NSString stringWithFormat:@"%@|%@", holder, @(lockId)];
-        serial_quene = CREATE_DISPATCH_SERIAL_QUEUE(identifier);
+        serial_queue = CREATE_DISPATCH_SERIAL_QUEUE(identifier);
     }
     
-    dispatch_semaphore_signal(add_new_quene_semp);
+    dispatch_semaphore_signal(add_new_queue_semp);
 
     __weak typeof(holder) wHolder = holder;
-    (async ? dispatch_async : dispatch_sync)(serial_quene, ^{
+    (async ? dispatch_async : dispatch_sync)(serial_queue, ^{
         if (nil != wHolder) {
             @autoreleasepool {
                 lockedBlock();
@@ -58,7 +58,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         }
     });
     
-    return serial_quene;
+    return serial_queue;
 }
 
 
@@ -100,16 +100,17 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     NSString* _name;
     RYOperationPriority _priority;
     
-    dispatch_time_t _maxWaitTimeForExcute;
-    dispatch_time_t _minusWaitTimeForExucte;
+    dispatch_time_t _maxWaitTimeForOperate;
+    dispatch_time_t _minusWaitTimeForOperate;
     
     BOOL _isCanceled;
     BOOL _isReady;
-    BOOL _isExcuting;
+    BOOL _isOperating;
     BOOL _isFinished;
     
     @public
-    __weak RYQuene *_quene;
+    __weak RYQueue *_queue;
+    dispatch_block_t _operateDoneBlock;
 }
 
 + (RYOperation *)create {
@@ -138,8 +139,8 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     if (self = [super init]) {
         _relation_set = [NSMutableSet set];
         _isReady = YES;
-        _maxWaitTimeForExcute = DISPATCH_TIME_FOREVER;
-        _minusWaitTimeForExucte = DISPATCH_TIME_NOW;
+        _maxWaitTimeForOperate = DISPATCH_TIME_FOREVER;
+        _minusWaitTimeForOperate = DISPATCH_TIME_NOW;
     }
     return self;
 }
@@ -179,8 +180,8 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     return _isReady;
 }
 
-- (BOOL)isExcuting {
-    return _isExcuting;
+- (BOOL)isOperating {
+    return _isOperating;
 }
 
 - (BOOL)isFinished {
@@ -289,23 +290,23 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     };
 }
 
-- (RYOperation *(^)(dispatch_time_t))setMaxWaitTimeForExcute {
+- (RYOperation *(^)(dispatch_time_t))setMaxWaitTimeForOperate {
     return ^RYOperation *(dispatch_time_t waitTime) {
         __weak typeof(self) wSelf = self;
         ry_lock(self, kRelationLock, YES, ^{
             __strong typeof(wSelf) sSelf = wSelf;
-            sSelf->_maxWaitTimeForExcute = waitTime;
+            sSelf->_maxWaitTimeForOperate = waitTime;
         });
         return self;
     };
 }
 
-- (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForExucte {
+- (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForOperate {
     return ^RYOperation *(dispatch_time_t waitTime) {
         __weak typeof(self) wSelf = self;
         ry_lock(self, kRelationLock, YES, ^{
             __strong typeof(wSelf) sSelf = wSelf;
-            sSelf->_minusWaitTimeForExucte = waitTime;
+            sSelf->_minusWaitTimeForOperate = waitTime;
         });
         return self;
     };
@@ -327,18 +328,18 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     return [allRelations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"%K == %@", NSStringFromSelector(@selector(relier)), self]];
 }
 
-- (void)excute:(dispatch_block_t)completedBlock {
+- (void)operate {
     __weak typeof(self) wSelf = self;
 
     ry_lock(self, kRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
-        if (sSelf->_isFinished || sSelf->_isExcuting) {
+        if (sSelf->_isFinished || sSelf->_isOperating) {
             return;
         }
-        sSelf->_isExcuting = YES;
+        sSelf->_isOperating = YES;
 
         dispatch_semaphore_t minus_wait_semaphore = dispatch_semaphore_create(0);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sSelf->_minusWaitTimeForExucte)), CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sSelf->_minusWaitTimeForOperate)), CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^{
             dispatch_semaphore_signal(minus_wait_semaphore);
         });
         
@@ -346,7 +347,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             NSArray<RYDependencyRelation *> *isDemanderRelations = sSelf.isDemanderRelations;
             dispatch_apply(isDemanderRelations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
                 RYDependencyRelation *relation = isDemanderRelations[index];
-                dispatch_semaphore_wait(isDemanderRelations[index].semaphore, sSelf->_maxWaitTimeForExcute);
+                dispatch_semaphore_wait(isDemanderRelations[index].semaphore, sSelf->_maxWaitTimeForOperate);
                 if (relation.relier->_isCanceled) {
                     sSelf->_isCanceled = YES;
                 }
@@ -356,7 +357,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             if (nil != sSelf->_operationBlock && !sSelf->_isCanceled) {
                 sSelf->_operationBlock();
             }
-            sSelf->_isExcuting = NO;
+            sSelf->_isOperating = NO;
             sSelf->_isFinished = YES;
         }
         
@@ -366,8 +367,8 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         });
         
         
-        if (nil != completedBlock) {
-            completedBlock();
+        if (nil !=  sSelf->_operateDoneBlock) {
+             sSelf->_operateDoneBlock();
         }
     });
 }
@@ -379,7 +380,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 @end
 
 
-@implementation RYQuene {
+@implementation RYQueue {
     @protected
     
     NSUInteger _maxConcurrentOperationCount;
@@ -387,11 +388,11 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     NSUInteger _identifier;
     BOOL _sync;
     
-    RYQuene *(^_excuteBlock)();
+    RYQueue *(^_excuteBlock)();
     dispatch_block_t _beforeExcuteBlock;
     dispatch_block_t _excuteDoneBlock;
     OperationWillStartBlock _operationWillStartBlock;
-    __weak dispatch_queue_t _excuteQuene;
+    __weak dispatch_queue_t _excuteQueue;
 
     NSMutableSet<RYOperation *> *_operationSet;
     
@@ -401,30 +402,30 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     
 }
 
-+ (RYQuene *)create {
++ (RYQueue *)create {
     return self.new;
 }
 
-+ (RYQuene *(^)(RYOperation *))createWithOperation {
-    return ^RYQuene* (RYOperation *operation) {
-        RYQuene *quene = self.create;
-        quene.addOperation(operation);
-        return quene;
++ (RYQueue *(^)(RYOperation *))createWithOperation {
+    return ^RYQueue* (RYOperation *operation) {
+        RYQueue *queue = self.create;
+        queue.addOperation(operation);
+        return queue;
     };
 }
 
-+ (RYQuene *(^)(NSArray<RYOperation *> *))createWithOperations {
-    return ^RYQuene* (NSArray<RYOperation *> *operations) {
-        RYQuene *quene = self.create;
-        quene.addOperations(operations);
-        return quene;
++ (RYQueue *(^)(NSArray<RYOperation *> *))createWithOperations {
+    return ^RYQueue* (NSArray<RYOperation *> *operations) {
+        RYQueue *queue = self.create;
+        queue.addOperations(operations);
+        return queue;
     };
 }
 
 - (instancetype)init {
     if (self = [super init]) {
         __weak typeof(self) wSelf = self;
-        _excuteBlock = ^RYQuene *{
+        _excuteBlock = ^RYQueue *{
             __strong typeof(wSelf) sSelf = wSelf;
             if (nil != sSelf->_beforeExcuteBlock) {
                 sSelf->_beforeExcuteBlock();
@@ -436,26 +437,26 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     return self;
 }
 
-- (RYQuene *(^)(RYOperation *))addOperation {
-    return ^RYQuene* (RYOperation *operation) {
+- (RYQueue *(^)(RYOperation *))addOperation {
+    return ^RYQueue* (RYOperation *operation) {
         return self.addOperations(@[operation]);
     };
 }
 
-- (RYQuene *(^)(NSArray<RYOperation *> *))addOperations {
+- (RYQueue *(^)(NSArray<RYOperation *> *))addOperations {
     NSParameterAssert(!self->_isFinished && !self->_isExcuting);
-    return ^RYQuene* (NSArray<RYOperation *> *operations) {
+    return ^RYQueue* (NSArray<RYOperation *> *operations) {
         __weak typeof(self) wSelf = self;
         ry_lock(self, kAddOperationLock, NO, ^{
             __strong typeof(wSelf) sSelf = wSelf;
             if (nil == sSelf->_operationSet) {
                 sSelf->_operationSet = [NSMutableSet set];
             }
-            ry_lock(self, kQueneExcuteLock, YES, ^{
+            ry_lock(self, kQueueExcuteLock, YES, ^{
                 [sSelf->_operationSet addObjectsFromArray:operations];
                 for (RYOperation *opt in operations) {
-                    NSCParameterAssert(opt->_quene == nil);
-                    opt->_quene = sSelf;
+                    NSCParameterAssert(opt->_queue == nil);
+                    opt->_queue = sSelf;
                 }
             });
         });
@@ -463,15 +464,15 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     };
 }
 
-- (RYQuene* (^)(NSInteger))setIdentifier {
-    return ^RYQuene* (NSInteger identifier) {
+- (RYQueue* (^)(NSInteger))setIdentifier {
+    return ^RYQueue* (NSInteger identifier) {
         _identifier = identifier;
         return self;
     };
 }
 
-- (RYQuene *(^)(BOOL async))setAsync {
-    return ^RYQuene* (BOOL async) {
+- (RYQueue *(^)(BOOL async))setAsync {
+    return ^RYQueue* (BOOL async) {
         _sync = !async;
         return self;
     };
@@ -489,29 +490,29 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     };
 }
 
-- (RYQuene *(^)(dispatch_block_t))setBeforeExcuteBlock {
-    return ^RYQuene* (dispatch_block_t beforeBlock) {
+- (RYQueue *(^)(dispatch_block_t))setBeforeExcuteBlock {
+    return ^RYQueue* (dispatch_block_t beforeBlock) {
         _beforeExcuteBlock = beforeBlock;
         return self;
     };
 }
 
-- (RYQuene *(^)(dispatch_block_t))setExcuteDoneBlock {
-    return ^RYQuene* (dispatch_block_t doneBlock) {
+- (RYQueue *(^)(dispatch_block_t))setExcuteDoneBlock {
+    return ^RYQueue* (dispatch_block_t doneBlock) {
         _excuteDoneBlock = doneBlock;
         return self;
     };
 }
 
-- (RYQuene *(^)(OperationWillStartBlock))setOperationWillStartBlock {
-    return ^RYQuene* (OperationWillStartBlock willStartBlock) {
+- (RYQueue *(^)(OperationWillStartBlock))setOperationWillStartBlock {
+    return ^RYQueue* (OperationWillStartBlock willStartBlock) {
         _operationWillStartBlock = willStartBlock;
         return self;
     };
 }
 
-- (RYQuene *(^)(NSUInteger))setMaxConcurrentOperationCount {
-    return ^RYQuene* (NSUInteger count) {
+- (RYQueue *(^)(NSUInteger))setMaxConcurrentOperationCount {
+    return ^RYQueue* (NSUInteger count) {
         NSCParameterAssert(count > 0);
         __weak typeof(self) wSelf = self;
         ry_lock(self, kSetMaxConcurrentOperationCountLock, NO, ^{
@@ -519,13 +520,13 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             if (count == sSelf.maxConcurrentOperationCount) {
                 return;
             }
-            if (sSelf->_isExcuting && nil != sSelf->_excuteQuene && nil != sSelf->_handle_concurrent_semaphore) {
-                dispatch_suspend(sSelf->_excuteQuene);
+            if (sSelf->_isExcuting && nil != sSelf->_excuteQueue && nil != sSelf->_handle_concurrent_semaphore) {
+                dispatch_suspend(sSelf->_excuteQueue);
                 BOOL increase = count > sSelf.maxConcurrentOperationCount;
                 for (NSUInteger i = sSelf.maxConcurrentOperationCount; i != count; increase ? ++i : --i) {
                     increase ? dispatch_semaphore_signal(sSelf->_handle_concurrent_semaphore) : dispatch_semaphore_wait(sSelf->_handle_concurrent_semaphore, DISPATCH_TIME_FOREVER);
                 }
-                dispatch_resume(sSelf->_excuteQuene);
+                dispatch_resume(sSelf->_excuteQueue);
             }
             sSelf->_maxConcurrentOperationCount = count;
         });
@@ -542,7 +543,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (void)excuteStart {
     __weak typeof(self) wSelf = self;
-    _excuteQuene = ry_lock(self, kQueneExcuteLock, !_sync, ^{
+    _excuteQueue = ry_lock(self, kQueueExcuteLock, !_sync, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         if (sSelf->_isFinished || sSelf->_isExcuting || sSelf->_isCancelled) {
             return;
@@ -556,9 +557,8 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             
             dispatch_semaphore_t excute_max_operation_count_semp = dispatch_semaphore_create(sSelf.maxConcurrentOperationCount);
             sSelf->_handle_concurrent_semaphore = excute_max_operation_count_semp;
-            dispatch_queue_t excute_quene = CREATE_DISPATCH_CONCURRENT_QUEUE(wSelf);
+            dispatch_queue_t operate_queue = CREATE_DISPATCH_CONCURRENT_QUEUE(wSelf);
             
-            dispatch_semaphore_t excute_done_semp = dispatch_semaphore_create(0);
             
             static void (^handleExcute)(RYOperation *);
             if (nil == handleExcute) {
@@ -566,9 +566,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
                     if (nil != sSelf->_operationWillStartBlock) {
                         sSelf->_operationWillStartBlock(opt);
                     }
-                    [opt excute:^{
-                        dispatch_semaphore_signal(excute_done_semp);
-                    }];
+                    [opt operate];
                     NSArray<RYDependencyRelation *> *relations = opt.isRelierRelations;
                     [relations enumerateObjectsUsingBlock:^(RYDependencyRelation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
                         if (nil != obj.demander) {
@@ -578,14 +576,18 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
                 };
             }
             
-            dispatch_apply(notDemanderSet.count, excute_quene, ^(size_t index) {
+            dispatch_apply(notDemanderSet.count, operate_queue, ^(size_t index) {
                 dispatch_semaphore_wait(excute_max_operation_count_semp, DISPATCH_TIME_FOREVER);
                 handleExcute(sortedNotDemanderArray[index]);
                 dispatch_semaphore_signal(excute_max_operation_count_semp);
             });
             
-            for (NSUInteger i = 0; i < sSelf->_operationSet.count; ++i) {
-                dispatch_semaphore_wait(excute_done_semp, DISPATCH_TIME_FOREVER);
+            dispatch_semaphore_t operate_done_semp = dispatch_semaphore_create(0);
+            for (RYOperation *opt in sSelf->_operationSet) {
+                opt->_operateDoneBlock = ^{
+                    dispatch_semaphore_signal(operate_done_semp);
+                };
+                dispatch_semaphore_wait(operate_done_semp, DISPATCH_TIME_FOREVER);
             }
             
             sSelf->_isExcuting = NO;
@@ -597,7 +599,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     });
 }
 
-- (RYQuene *(^)())excute {
+- (RYQueue *(^)())excute {
     return _excuteBlock;
 }
 
@@ -608,8 +610,8 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     __weak typeof(self) wSelf = self;
     ry_lock(self, kCancelAllOperationsLock, NO, ^{
         __strong typeof(wSelf) sSelf = wSelf;
-        if (sSelf->_isExcuting && nil != sSelf->_excuteQuene) {
-            dispatch_suspend(sSelf->_excuteQuene);
+        if (sSelf->_isExcuting && nil != sSelf->_excuteQueue) {
+            dispatch_suspend(sSelf->_excuteQueue);
         }
         NSArray<RYOperation *> *operations = sSelf->_operationSet.allObjects;
         dispatch_apply(operations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
@@ -617,8 +619,8 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             [opt cancel];
         });
         sSelf->_isCancelled = YES;
-        if (sSelf->_isExcuting && nil != sSelf->_excuteQuene) {
-            dispatch_resume(sSelf->_excuteQuene);
+        if (sSelf->_isExcuting && nil != sSelf->_excuteQueue) {
+            dispatch_resume(sSelf->_excuteQueue);
         }
     });
 }

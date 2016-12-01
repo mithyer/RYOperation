@@ -16,10 +16,8 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
     kRYOperationPriorityVeryHigh = 1000,
 };
 
-#define RY_TIME_FOREVER DISPATCH_TIME_FOREVER
-#define RY_TIME_NOW DISPATCH_TIME_NOW
 
-@class RYQuene;
+@class RYQueue;
 @interface RYOperation : NSObject
 
 + (RYOperation *)create;
@@ -31,8 +29,8 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 - (RYOperation *(^)(dispatch_block_t))setBlock;
 - (RYOperation *(^)(NSString *))setName;
 - (RYOperation *(^)(RYOperationPriority))setPriority;
-- (RYOperation *(^)(dispatch_time_t))setMaxWaitTimeForExcute; // default:RY_TIME_FOREVER
-- (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForExucte; // default:RY_TIME_NOW
+- (RYOperation *(^)(dispatch_time_t))setMaxWaitTimeForOperate; // DISPATCH_TIME_FOREVER
+- (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForOperate; // DISPATCH_TIME_NOW
 
 - (NSSet<RYOperation *> *)allDependencies;
 - (void)cancel;
@@ -40,7 +38,7 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 - (NSString *)name;
 - (BOOL)isCancelled;
 - (BOOL)isReady;
-- (BOOL)isExcuting;
+- (BOOL)isOperating;
 - (BOOL)isFinished;
 
 @end
@@ -48,21 +46,21 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 
 typedef void (^OperationWillStartBlock)(RYOperation *);
 
-@interface RYQuene : NSObject
+@interface RYQueue : NSObject
 
-+ (RYQuene *)create;
-+ (RYQuene *(^)(RYOperation *))createWithOperation;
-+ (RYQuene *(^)(NSArray<RYOperation *> *))createWithOperations;
++ (RYQueue *)create;
++ (RYQueue *(^)(RYOperation *))createWithOperation;
++ (RYQueue *(^)(NSArray<RYOperation *> *))createWithOperations;
 
-- (RYQuene *(^)(RYOperation *))addOperation;
-- (RYQuene *(^)(NSArray<RYOperation *> *))addOperations;
-- (RYQuene *(^)(NSInteger ))setIdentifier;
-- (RYQuene *(^)(BOOL async /* default: YES */))setAsync;
-- (RYQuene *(^)(NSUInteger))setMaxConcurrentOperationCount;
-- (RYQuene *(^)(dispatch_block_t))setBeforeExcuteBlock;
-- (RYQuene *(^)(dispatch_block_t))setExcuteDoneBlock;
-- (RYQuene *(^)(OperationWillStartBlock))setOperationWillStartBlock;
-- (RYQuene *(^)())excute;
+- (RYQueue *(^)(RYOperation *))addOperation;
+- (RYQueue *(^)(NSArray<RYOperation *> *))addOperations;
+- (RYQueue *(^)(NSInteger ))setIdentifier;
+- (RYQueue *(^)(BOOL async /* default: YES */))setAsync;
+- (RYQueue *(^)(NSUInteger))setMaxConcurrentOperationCount;
+- (RYQueue *(^)(dispatch_block_t))setBeforeExcuteBlock;
+- (RYQueue *(^)(dispatch_block_t))setExcuteDoneBlock;
+- (RYQueue *(^)(OperationWillStartBlock))setOperationWillStartBlock;
+- (RYQueue *(^)())excute;
 
 - (NSSet<RYOperation *> *(^)(NSString *))operationsForName;
 - (void)cancel;
