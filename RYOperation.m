@@ -24,19 +24,31 @@ enum {
 };
 
 dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock) {
-    if (nil == lockedBlock) {
+    if (nil == holder || nil == lockedBlock) {
         return nil;
     }
     static dispatch_once_t once_t;
-    static dispatch_semaphore_t add_new_queue_semp;
+    static dispatch_semaphore_t add_holder_semp_semp;
     dispatch_once(&once_t, ^{
-        add_new_queue_semp = dispatch_semaphore_create(1);
+        add_holder_semp_semp = dispatch_semaphore_create(1);
     });
     
-    dispatch_semaphore_wait(add_new_queue_semp, DISPATCH_TIME_FOREVER);
+    dispatch_semaphore_wait(add_holder_semp_semp, DISPATCH_TIME_FOREVER);
+    
+    static void *holder_semp_key = &holder_semp_key;
+    dispatch_semaphore_t holder_semp = objc_getAssociatedObject(holder, holder_semp_key);
+    if (nil == holder_semp) {
+        holder_semp = dispatch_semaphore_create(1);
+        objc_setAssociatedObject(holder_semp, holder_semp_key, holder_semp, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    
+    dispatch_semaphore_signal(add_holder_semp_semp);
+    
+    
+    dispatch_semaphore_wait(holder_semp, DISPATCH_TIME_FOREVER);
     
     static void *seriral_queue_map_key = &seriral_queue_map_key;
-    NSMapTable<NSNumber *, dispatch_queue_t> * serial_queue_map = objc_getAssociatedObject(holder, seriral_queue_map_key);
+    NSMapTable<NSNumber *, dispatch_queue_t> *serial_queue_map = objc_getAssociatedObject(holder, seriral_queue_map_key);
     if (nil == serial_queue_map) {
         serial_queue_map = [NSMapTable mapTableWithKeyOptions:NSPointerFunctionsStrongMemory valueOptions:NSPointerFunctionsWeakMemory];
         objc_setAssociatedObject(holder ,seriral_queue_map_key, serial_queue_map, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -47,7 +59,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         serial_queue = CREATE_DISPATCH_SERIAL_QUEUE(identifier);
     }
     
-    dispatch_semaphore_signal(add_new_queue_semp);
+    dispatch_semaphore_signal(holder_semp);
 
     __weak typeof(holder) wHolder = holder;
     (async ? dispatch_async : dispatch_sync)(serial_queue, ^{
