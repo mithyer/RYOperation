@@ -146,7 +146,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (void)addRelation:(RYDependencyRelation *)relation {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, YES, ^{
+    ry_lock(self, kRelationLock, NO, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         [sSelf->_relation_set addObject:relation];
     });
@@ -154,7 +154,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (void)removeRelation:(RYDependencyRelation *)relation {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, YES, ^{
+    ry_lock(self, kRelationLock, NO, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         [sSelf->_relation_set removeObject:relation];
     });
@@ -337,7 +337,8 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         if (sSelf->_isFinished || sSelf->_isExcuting) {
             return;
         }
-        
+        sSelf->_isExcuting = YES;
+
         dispatch_semaphore_t minus_wait_semaphore = dispatch_semaphore_create(0);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sSelf->_minusWaitTimeForExucte)), CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^{
             dispatch_semaphore_signal(minus_wait_semaphore);
@@ -355,7 +356,6 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             
             dispatch_semaphore_wait(minus_wait_semaphore, DISPATCH_TIME_FOREVER);
             if (nil != sSelf->_operationBlock && !sSelf->_isCanceled) {
-                sSelf->_isExcuting = YES;
                 sSelf->_operationBlock();
             }
             sSelf->_isExcuting = NO;
@@ -453,7 +453,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             if (nil == sSelf->_operationSet) {
                 sSelf->_operationSet = [NSMutableSet set];
             }
-            ry_lock(self, kQueneExcuteLock, NO, ^{
+            ry_lock(self, kQueneExcuteLock, YES, ^{
                 [sSelf->_operationSet addObjectsFromArray:operations];
                 for (RYOperation *opt in operations) {
                     NSCParameterAssert(opt->_quene == nil);
