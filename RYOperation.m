@@ -64,11 +64,9 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
     __weak typeof(holder) wHolder = holder;
     (async ? dispatch_async : dispatch_sync)(serial_queue, ^{
-        if (nil != wHolder) {
+        if (nil != wHolder && nil != lockedBlock) {
             @autoreleasepool {
-                if (nil != lockedBlock) {
-                    lockedBlock();
-                }
+                lockedBlock();
             }
         }
     });
