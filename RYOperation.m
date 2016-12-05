@@ -25,7 +25,7 @@ enum {
 };
 
 dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock) {
-    if (nil == holder || nil == lockedBlock) {
+    if (nil == holder) {
         return nil;
     }
     static dispatch_once_t once_t;
@@ -66,7 +66,9 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     (async ? dispatch_async : dispatch_sync)(serial_queue, ^{
         if (nil != wHolder) {
             @autoreleasepool {
-                lockedBlock();
+                if (nil != lockedBlock) {
+                    lockedBlock();
+                }
             }
         }
     });
@@ -364,7 +366,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
                 dispatch_apply(isDemanderRelations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
                     RYDependencyRelation *relation = isDemanderRelations[index];
                     dispatch_semaphore_wait(isDemanderRelations[index].semaphore, sSelf->_maxWaitTimeForOperate);
-                    if (relation.relier->_isCanceled) {
+                    if (nil != relation.relier && relation.relier->_isCanceled) {
                         sSelf->_isCanceled = YES;
                     }
                 });
@@ -586,12 +588,6 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
                         sSelf->_operationWillStartBlock(opt);
                     }
                     [opt operate];
-                    NSArray<RYDependencyRelation *> *relations = opt.isRelierRelations;
-                    [relations enumerateObjectsUsingBlock:^(RYDependencyRelation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
-                        if (nil != obj.demander) {
-                            handleExcute(obj.demander);
-                        }
-                    }];
                 };
             }
             
@@ -602,12 +598,23 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             });
             
             dispatch_semaphore_t operate_done_semp = dispatch_semaphore_create(0);
+            
             for (RYOperation *opt in sSelf->_operationSet) {
+                __weak typeof(opt) wOpt = opt;
                 opt->_operateDoneBlock = ^{
                     dispatch_semaphore_signal(operate_done_semp);
+                    NSArray<RYDependencyRelation *> *relations = wOpt.isRelierRelations;
+                    [relations enumerateObjectsUsingBlock:^(RYDependencyRelation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+                        if (nil != obj.demander) {
+                            handleExcute(obj.demander);
+                        }
+                    }];
                 };
-                dispatch_semaphore_wait(operate_done_semp, DISPATCH_TIME_FOREVER);
             }
+            
+            [sSelf->_operationSet enumerateObjectsUsingBlock:^(RYOperation * _Nonnull obj, BOOL * _Nonnull stop) {
+                dispatch_semaphore_wait(operate_done_semp, DISPATCH_TIME_FOREVER);
+            }];
             
             sSelf->_isExcuting = NO;
             sSelf->_isFinished = YES;
