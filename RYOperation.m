@@ -58,6 +58,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     if (nil == serial_queue) {
         NSString *identifier = [NSString stringWithFormat:@"%@|%@", holder, @(lockId)];
         serial_queue = CREATE_DISPATCH_SERIAL_QUEUE(identifier);
+        [serial_queue_map setObject:serial_queue forKey:@(lockId)];
     }
     
     dispatch_semaphore_signal(holder_semp);
@@ -575,9 +576,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             NSArray<RYOperation *> *sortedNotDemanderArray = [notDemanderSet sortedArrayUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:NSStringFromSelector(@selector(priority)) ascending:NO]]];
             
             dispatch_semaphore_t excute_max_operation_count_semp = dispatch_semaphore_create(sSelf.maxConcurrentOperationCount);
-            sSelf->_handle_concurrent_semaphore = excute_max_operation_count_semp;
-            dispatch_queue_t operate_queue = CREATE_DISPATCH_CONCURRENT_QUEUE(wSelf);
-            
+            sSelf->_handle_concurrent_semaphore = excute_max_operation_count_semp;            
             
             static void (^handleExcute)(RYOperation *);
             if (nil == handleExcute) {
@@ -589,11 +588,11 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
                 };
             }
             
-            dispatch_apply(notDemanderSet.count, operate_queue, ^(size_t index) {
+            [sortedNotDemanderArray enumerateObjectsUsingBlock:^(RYOperation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
                 dispatch_semaphore_wait(excute_max_operation_count_semp, DISPATCH_TIME_FOREVER);
-                handleExcute(sortedNotDemanderArray[index]);
+                handleExcute(obj);
                 dispatch_semaphore_signal(excute_max_operation_count_semp);
-            });
+            }];
             
             dispatch_semaphore_t operate_done_semp = dispatch_semaphore_create(0);
             
@@ -632,7 +631,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         return;
     }
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kCancelAllOperationsLock, NO, ^{
+    ry_lock(self, kCancelAllOperationsLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         if (sSelf->_isCancelled) {
             return;
