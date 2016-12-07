@@ -578,12 +578,15 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             dispatch_semaphore_t excute_max_operation_count_semp = dispatch_semaphore_create(sSelf.maxConcurrentOperationCount);
             sSelf->_handle_concurrent_semaphore = excute_max_operation_count_semp;            
             
-            static void (^handleExcute)(RYOperation *);
+            static void (^handleExcute)(RYOperation *) = nil;
             if (nil == handleExcute) {
                 handleExcute = ^(RYOperation *opt) {
-                    if (nil != sSelf->_operationWillStartBlock) {
-                        sSelf->_operationWillStartBlock(opt);
-                    }
+                    ry_lock(opt, kOperationOperateLock, YES, ^{
+                        __strong typeof(wSelf) sSelf = wSelf;
+                        if (nil != sSelf->_operationWillStartBlock) {
+                            sSelf->_operationWillStartBlock(opt);
+                        }
+                    });
                     [opt operate];
                 };
             }
@@ -636,6 +639,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         if (sSelf->_isCancelled) {
             return;
         }
+        sSelf->_isCancelled = YES;
         if (sSelf->_isExcuting && nil != sSelf->_excuteQueue) {
             dispatch_suspend(sSelf->_excuteQueue);
         }
@@ -644,7 +648,6 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             RYOperation *opt = operations[index];
             [opt cancel];
         });
-        sSelf->_isCancelled = YES;
         if (sSelf->_isExcuting && nil != sSelf->_excuteQueue) {
             dispatch_resume(sSelf->_excuteQueue);
         }
