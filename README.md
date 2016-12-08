@@ -11,11 +11,11 @@
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         for (size_t i = 0; i < max; ++i) {
-            ry_lock(self, kLockId, YES, ^{
+            ry_lock(nil, kLockId, YES, ^{
                 ++t;
             });
         }
-        ry_lock(self, kLockId, YES, ^{
+        ry_lock(nil, kLockId, YES, ^{
             a = t;
             dispatch_group_leave(group_t);
         });
@@ -24,7 +24,7 @@
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         for (size_t i = 0; i < 100000; ++i) {
-            ry_lock(self, kLockId, NO, ^{
+            ry_lock(nil, kLockId, NO, ^{
                 ++t;
             });
         }
@@ -32,7 +32,6 @@
         dispatch_group_leave(group_t);
     });
     
-    XCTestExpectation *expt = [self expectationWithDescription:NSStringFromSelector(_cmd)];
     dispatch_group_notify(group_t, dispatch_get_main_queue(), ^{
         // b == max * 2 || a == max * 2
     });

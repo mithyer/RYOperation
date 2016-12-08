@@ -28,8 +28,8 @@ enum {
 };
 
 dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock) {
-    if (nil == holder) {
-        return nil;
+    if (!holder) {
+        holder = NSObject.class;
     }
     static dispatch_once_t once_t;
     static dispatch_semaphore_t add_holder_semp_semp;
