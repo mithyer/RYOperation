@@ -16,7 +16,7 @@
 #define RYO_DEPENDENCY_CYCLE_CHECK_ON
 
 enum {
-    kRelationLock = 1000,
+    kOperationRelationLock = 1000,
     kOperationCancelLock,
     kOperationSuspendLock,
     kOperationOperateLock,
@@ -29,10 +29,14 @@ enum {
     kSetMaxConcurrentOperationCountLock,
 };
 
-dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock) {
-    if (!holder) {
-        holder = NSObject.class;
-    }
+enum {
+    kOperationRelationLockSuspendedQueue,
+    kOperationOperateLockSuspendedQueue,
+    
+    OperationSuspendedQueueCount
+};
+
+dispatch_queue_t ry_lock_get_lock_queue(id holder, NSUInteger lockId, BOOL createIfNotExist) {
     static dispatch_once_t once_t;
     static dispatch_semaphore_t add_holder_semp_semp;
     dispatch_once(&once_t, ^{
@@ -60,17 +64,25 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         objc_setAssociatedObject(holder ,seriral_queue_map_key, serial_queue_map, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     dispatch_queue_t serial_queue = [serial_queue_map objectForKey:@(lockId)];
-    if (nil == serial_queue) {
+    if (nil == serial_queue && createIfNotExist) {
         NSString *identifier = [NSString stringWithFormat:@"%@|%@", holder, @(lockId)];
         serial_queue = CREATE_DISPATCH_SERIAL_QUEUE(identifier);
         [serial_queue_map setObject:serial_queue forKey:@(lockId)];
     }
     
     dispatch_semaphore_signal(holder_semp);
+    
+    return serial_queue;
+}
 
+dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock) {
+    if (!holder) {
+        holder = NSObject.class;
+    }
+    dispatch_queue_t queue = ry_lock_get_lock_queue(holder, lockId, YES);
     __weak typeof(holder) wHolder = holder;
     if (nil != lockedBlock) {
-        (async ? dispatch_async : dispatch_sync)(serial_queue, ^{
+        (async ? dispatch_async : dispatch_sync)(queue, ^{
             if (nil != wHolder) {
                 @autoreleasepool {
                     lockedBlock();
@@ -79,7 +91,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
         });
     }
     
-    return serial_queue;
+    return queue;
 }
 
 
@@ -123,11 +135,10 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     
     dispatch_time_t _maxWaitTimeForOperate;
     dispatch_time_t _minWaitTimeForOperate;
+    dispatch_queue_t _suspended_queue[OperationSuspendedQueueCount];
     
     BOOL _isCancelled;
     BOOL _isReady;
-
-    dispatch_queue_t _suspended_queue[2];
     
     @public
     __weak RYQueue *_queue;
@@ -171,7 +182,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (void)addRelation:(RYDependencyRelation *)relation {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, YES, ^{
+    ry_lock(self, kOperationRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         if (nil == sSelf) {
             return;
@@ -182,7 +193,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (void)removeRelation:(RYDependencyRelation *)relation {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, YES, ^{
+    ry_lock(self, kOperationRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         if (nil == sSelf) {
             return;
@@ -209,6 +220,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             return;
         }
         sSelf->_isCancelled = YES;
+        [sSelf resume];
     });
 }
 
@@ -328,7 +340,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
 
 - (RYOperation *)removeAllDependencies {
     __weak typeof(self) wSelf = self;
-    ry_lock(self, kRelationLock, YES, ^{
+    ry_lock(self, kOperationRelationLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
         if (nil == sSelf) {
             return;
@@ -432,7 +444,7 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
             dispatch_semaphore_signal(min_wait_semaphore);
         });
         
-        ry_lock(sSelf, kRelationLock, NO, ^{
+        ry_lock(sSelf, kOperationRelationLock, NO, ^{
             __strong typeof(wSelf) sSelf = wSelf;
             if (!sSelf.isCancelled) {
                 NSArray<RYDependencyRelation *> *isDemanderRelations = sSelf.isDemanderRelations;
@@ -468,13 +480,19 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     __weak typeof(self) wSelf = self;
     ry_lock(self, kOperationSuspendLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
-        if (nil == sSelf || nil != _suspended_queue[0]) {
+        if (nil == sSelf) {
             return;
         }
-        _suspended_queue[0] = ry_lock(sSelf, kOperationOperateLock, YES, nil);
-        _suspended_queue[1] = ry_lock(sSelf, kRelationLock, YES, nil);
-        dispatch_suspend(_suspended_queue[0]);
-        dispatch_suspend(_suspended_queue[1]);
+        for (NSUInteger i = 0; i < OperationSuspendedQueueCount; ++i) {
+            if (sSelf->_suspended_queue[i]) {
+                continue;
+            }
+            dispatch_queue_t queue = ry_lock_get_lock_queue(sSelf, kOperationRelationLock, NO);
+            if (nil != queue) {
+                dispatch_suspend(queue);
+                sSelf->_suspended_queue[i] = queue;
+            }
+        }
     });
 
 }
@@ -483,13 +501,16 @@ dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_bloc
     __weak typeof(self) wSelf = self;
     ry_lock(self, kOperationSuspendLock, YES, ^{
         __strong typeof(wSelf) sSelf = wSelf;
-        if (nil == sSelf || nil == _suspended_queue[0]) {
+        if (nil == sSelf) {
             return;
         }
-        dispatch_resume(_suspended_queue[0]);
-        dispatch_resume(_suspended_queue[1]);
-        _suspended_queue[0] = nil;
-        _suspended_queue[1] = nil;
+        for (NSUInteger i = 0; i < OperationSuspendedQueueCount; ++i) {
+            dispatch_queue_t queue = sSelf->_suspended_queue[i];
+            if (nil != queue) {
+                dispatch_resume(queue);
+                sSelf->_suspended_queue[i] = nil;
+            }
+        }
     });
 }
 
