@@ -85,7 +85,7 @@
     
     opt2 = RYOperation.createWithBlock(^{
         RYLog(@"2");
-    }).setMinusWaitTimeForOperate(3 * NSEC_PER_SEC);
+    }).setMinWaitTimeForOperate(3 * NSEC_PER_SEC);
     
     RYQueue *queue2 = RYQueue.create.addOperation(opt2).setExcuteDoneBlock(^{
         RYLog(@"done2");

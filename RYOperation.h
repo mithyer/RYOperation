@@ -32,7 +32,7 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 - (RYOperation *(^)(NSString *))setName;
 - (RYOperation *(^)(RYOperationPriority))setPriority;
 - (RYOperation *(^)(dispatch_time_t))setMaxWaitTimeForOperate; // DISPATCH_TIME_FOREVER
-- (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForOperate; // DISPATCH_TIME_NOW
+- (RYOperation *(^)(dispatch_time_t))setMinWaitTimeForOperate; // DISPATCH_TIME_NOW
 
 - (NSSet<RYOperation *> *)allDependencies;
 
