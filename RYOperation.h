@@ -8,6 +8,8 @@
 
 #import <Foundation/Foundation.h>
 
+#define RYLog NSLog
+
 typedef NS_ENUM(NSInteger, RYOperationPriority) {
     kRYOperationPriorityVeryLow = -1000,
     kRYOperationPriorityLow = -500,
@@ -33,7 +35,11 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 - (RYOperation *(^)(dispatch_time_t))setMinusWaitTimeForOperate; // DISPATCH_TIME_NOW
 
 - (NSSet<RYOperation *> *)allDependencies;
+
+- (void)suspend;
+- (void)resume;
 - (void)cancel;
+
 
 - (NSString *)name;
 - (BOOL)isCancelled;
@@ -63,8 +69,11 @@ typedef void (^OperationWillStartBlock)(RYOperation *);
 - (RYQueue *(^)())excute;
 
 - (NSSet<RYOperation *> *(^)(NSString *))operationsForName;
-- (void)cancel;
 
+- (void)suspend;
+- (void)resume;
+
+- (void)cancel;
 - (BOOL)isCancelled;
 
 @end
