@@ -61,7 +61,7 @@ NSArray<NSString *> *RYGetLog() {
 - (void)test_rylock {
     static const void *const kLockId = &kLockId;
     static const size_t max = 100000;
-    __block size_t t = 0, a = 0, b = 0;
+    __block size_t t = 0;
     
     
     dispatch_group_t group_t = dispatch_group_create();
@@ -74,19 +74,17 @@ NSArray<NSString *> *RYGetLog() {
             });
         }
         ry_lock(nil, kLockId, YES, ^(id holder){
-            a = t;
             dispatch_group_leave(group_t);
         });
     });
 
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        for (size_t i = 0; i < 100000; ++i) {
+        for (size_t i = 0; i < max; ++i) {
             ry_lock(nil, kLockId, NO, ^(id holder){
                 ++t;
             });
         }
-        b = t;
         dispatch_group_leave(group_t);
     });
     
@@ -96,8 +94,7 @@ NSArray<NSString *> *RYGetLog() {
     });
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
-        NSLog(@"%zd %zd", b, a);
-        XCTAssert(b == max * 2 || a == max * 2);
+        XCTAssert(t == max * 2);
     }];
 }
 
@@ -137,7 +134,6 @@ NSArray<NSString *> *RYGetLog() {
     RYLog(@"5");
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
-        NSLog(@"%@", RYGetLog());
         NSArray *expectRes = @[@"before", @"5", @"4", @"3", @"done"];
         XCTAssert([RYGetLog() isEqualToArray:expectRes]);
     }];
@@ -256,7 +252,6 @@ NSArray<NSString *> *RYGetLog() {
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
         NSArray *expectRes = @[@"1", @"bs", @"br", @"2", @"done"];
-        NSLog(@"%@", RYGetLog());
         XCTAssert([RYGetLog() isEqualToArray:expectRes]);
     }];
 }

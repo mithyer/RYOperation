@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 
+#define RYO_DEPENDENCY_CYCLE_CHECK_ON
 #define RYLog NSLog
 
 typedef NS_ENUM(NSInteger, RYOperationPriority) {

@@ -13,8 +13,6 @@
 #define CREATE_DISPATCH_SERIAL_QUEUE(ID) dispatch_queue_create(DISPATCH_QUENE_LABEL(ID), DISPATCH_QUEUE_SERIAL)
 #define CREATE_DISPATCH_CONCURRENT_QUEUE(ID) dispatch_queue_create(DISPATCH_QUENE_LABEL(ID), DISPATCH_QUEUE_CONCURRENT)
 
-#define RYO_DEPENDENCY_CYCLE_CHECK_ON
-
 
 static const void *const kOperationRelationLock = &kOperationRelationLock;
 static const void *const kOperationCancelLock = &kOperationCancelLock;
@@ -238,11 +236,11 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
     return _isFinished;
 }
 
-- (NSString *)name { // for NSPredicate
+- (NSString *)name {
     return _name;
 }
 
-- (RYOperationPriority)priority { // for NSPredicate
+- (RYOperationPriority)priority {
     return _priority;
 }
 
@@ -414,17 +412,18 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
         sSelf->_isOperating = YES;
 
         dispatch_semaphore_t min_wait_semaphore = dispatch_semaphore_create(0);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sSelf.minWaitTimeForOperate)), CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sSelf.minWaitTimeForOperate)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             dispatch_semaphore_signal(min_wait_semaphore);
         });
         
+        dispatch_queue_t apply_queue = CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf);
         if (!sSelf.isCancelled) {
             __block NSArray<RYDependencyRelation *> *isDemanderRelations = nil;
             ry_lock(sSelf, kOperationRelationLock, NO, ^(id holder){
                 isDemanderRelations = sSelf.isDemanderRelations.allObjects;
 
             });
-            dispatch_apply(isDemanderRelations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
+            dispatch_apply(isDemanderRelations.count, apply_queue, ^(size_t index) {
                 RYDependencyRelation *relation = isDemanderRelations[index];
                 dispatch_semaphore_wait(isDemanderRelations[index].semaphore, sSelf.maxWaitTimeForOperate);
                 if (nil != relation.relier && relation.relier.isCancelled) {
@@ -442,7 +441,7 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
         ry_lock(sSelf, kOperationRelationLock, NO, ^(id holder){
             isRelierRelations =  sSelf.isRelierRelations.allObjects;
         });
-        dispatch_apply(isRelierRelations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
+        dispatch_apply(isRelierRelations.count, apply_queue, ^(size_t index) {
             dispatch_semaphore_signal(isRelierRelations[index].semaphore);
         });
         
