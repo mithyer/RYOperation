@@ -78,4 +78,5 @@ typedef void (^OperationWillStartBlock)(RYOperation *);
 
 @end
 
-extern dispatch_queue_t ry_lock(id holder, NSUInteger lockId, BOOL async, dispatch_block_t lockedBlock);
+typedef void (^RYLockedBlock)(id holder);
+extern dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock lockedBlock);

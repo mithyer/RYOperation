@@ -13,15 +13,11 @@
 #undef RYLog
 #endif
 
-static id s_logHolder = nil;
+static const void *const klogHolderKey = &klogHolderKey;
 static NSMutableArray *s_logArr = nil;
 
 void RYLog(NSString *log) {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        s_logHolder = NSObject.new;
-    });
-    ry_lock(s_logHolder, 0, YES, ^{
+    ry_lock(nil, klogHolderKey, YES, ^(id holder){
         if (nil == s_logArr) {
             s_logArr = [NSMutableArray array];
         }
@@ -30,7 +26,7 @@ void RYLog(NSString *log) {
 }
 
 void RYLogClear() {
-    ry_lock(s_logHolder, 0, YES, ^{
+    ry_lock(nil, klogHolderKey, YES, ^(id holder){
         if (nil != s_logArr) {
             [s_logArr removeAllObjects];
         }
@@ -39,7 +35,7 @@ void RYLogClear() {
 
 NSArray<NSString *> *RYGetLog() {
     __block NSArray<NSString *> *logs = nil;
-    ry_lock(s_logHolder, 0, NO, ^{
+    ry_lock(nil, klogHolderKey, NO, ^(id holder){
         logs = s_logArr;
     });
     return logs;
@@ -63,7 +59,7 @@ NSArray<NSString *> *RYGetLog() {
 }
 
 - (void)test_rylock {
-    static const NSInteger kLockId = 1;
+    static const void *const kLockId = &kLockId;
     static const size_t max = 100000;
     __block size_t t = 0, a = 0, b = 0;
     
@@ -73,11 +69,11 @@ NSArray<NSString *> *RYGetLog() {
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         for (size_t i = 0; i < max; ++i) {
-            ry_lock(nil, kLockId, YES, ^{
+            ry_lock(nil, kLockId, YES, ^(id holder){
                 ++t;
             });
         }
-        ry_lock(nil, kLockId, YES, ^{
+        ry_lock(nil, kLockId, YES, ^(id holder){
             a = t;
             dispatch_group_leave(group_t);
         });
@@ -86,7 +82,7 @@ NSArray<NSString *> *RYGetLog() {
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         for (size_t i = 0; i < 100000; ++i) {
-            ry_lock(nil, kLockId, NO, ^{
+            ry_lock(nil, kLockId, NO, ^(id holder){
                 ++t;
             });
         }
