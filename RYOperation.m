@@ -734,7 +734,7 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
 }
 
 - (void)suspend {
-    if (nil == self || nil == _operationSet || _operationSet.count < 1) {
+    if (_operationSet || _operationSet.count < 1) {
         return;
     }
     ry_lock(self, kQueueSuspendLock, YES, ^(id holder){
@@ -754,7 +754,7 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
 }
 
 - (void)resume {
-    if (nil == self || nil == _operationSet || _operationSet.count < 1) {
+    if (nil == _operationSet || _operationSet.count < 1) {
         return;
     }
     ry_lock(self, kQueueSuspendLock, YES, ^(id holder){

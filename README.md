@@ -1,7 +1,7 @@
 # RYOperation
 
 ###e.g. ry_lock
-    static const NSInteger kLockId = 1;
+    static const void *const kLockId = &kLockId;
     static const size_t max = 100000;
     __block size_t t = 0, a = 0, b = 0;
     
@@ -16,7 +16,6 @@
             });
         }
         ry_lock(nil, kLockId, YES, ^{
-            a = t;
             dispatch_group_leave(group_t);
         });
     });
@@ -28,12 +27,11 @@
                 ++t;
             });
         }
-        b = t;
         dispatch_group_leave(group_t);
     });
     
     dispatch_group_notify(group_t, dispatch_get_main_queue(), ^{
-        // b == max * 2 || a == max * 2
+        // t == max * 2
     });
 
 ###e.g. operation dependency and cancel
