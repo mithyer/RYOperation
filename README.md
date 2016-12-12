@@ -1,4 +1,11 @@
+
 # RYOperation
+
+
+Is a class which is similar to NSOperation, but with more powerful features and more convenient usage.
+
+It is based on GCD.
+
 
 ###e.g. ry_lock
     static const void *const kLockId = &kLockId;

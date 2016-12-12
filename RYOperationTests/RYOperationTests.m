@@ -252,7 +252,6 @@ NSArray<NSString *> *RYGetLog() {
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
         NSArray *expectRes = @[@"1", @"bs", @"br", @"2", @"done"];
-        NSLog(@"%@",RYGetLog());
         XCTAssert([RYGetLog() isEqualToArray:expectRes]);
     }];
 }
