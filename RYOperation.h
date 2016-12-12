@@ -36,13 +36,12 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 - (RYOperation *(^)(dispatch_time_t))setMinWaitTimeForOperate; // DISPATCH_TIME_NOW
 
 - (NSSet<RYOperation *> *)allDependencies;
+- (NSString *)name;
 
 - (void)suspend;
 - (void)resume;
 - (void)cancel;
 
-
-- (NSString *)name;
 - (BOOL)isCancelled;
 - (BOOL)isReady;
 - (BOOL)isOperating;
@@ -73,9 +72,11 @@ typedef void (^OperationWillStartBlock)(RYOperation *);
 
 - (void)suspend;
 - (void)resume;
-
 - (void)cancel;
+
+- (BOOL)isExcuting;
 - (BOOL)isCancelled;
+- (BOOL)isFinished;
 
 @end
 

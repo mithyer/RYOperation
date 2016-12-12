@@ -94,6 +94,11 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
     return queue;
 }
 
+NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t block) {
+    [target willChangeValueForKey:key];
+    block();
+    [target didChangeValueForKey:key];
+}
 
 @interface RYDependencyRelation : NSObject
 
@@ -173,9 +178,11 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
 
 - (instancetype)init {
     if (self = [super init]) {
-        _isReady = YES;
         _maxWaitTimeForOperate = DISPATCH_TIME_FOREVER;
         _minWaitTimeForOperate = DISPATCH_TIME_NOW;
+        ry_valueChange(self, NSStringFromSelector(@selector(isReady)), ^{
+            _isReady = YES;
+        });
     }
     return self;
 }
@@ -183,6 +190,14 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
 - (void)addRelation:(RYDependencyRelation *)relation {
     ry_lock(self, kOperationRelationLock, YES, ^(id holder){
         RYOperation *sSelf = holder;
+        
+        NSString *isReadyKey = NSStringFromSelector(@selector(isReady));
+        if (sSelf->_isReady) {
+            ry_valueChange(sSelf, isReadyKey, ^{
+                sSelf->_isReady = NO;
+            });
+        }
+        
         if (relation.relier == sSelf) {
             if (nil == sSelf->_isRelierRelations) {
                 sSelf->_isRelierRelations = [NSMutableSet set];
@@ -194,12 +209,24 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
             }
             [sSelf->_isDemanderRelations addObject:relation];
         }
+        
+        ry_valueChange(sSelf, isReadyKey, ^{
+            sSelf->_isReady = YES;
+        });
     });
 }
 
 - (void)removeRelation:(RYDependencyRelation *)relation {
     ry_lock(self, kOperationRelationLock, YES, ^(id holder){
         RYOperation *sSelf = holder;
+        
+        NSString *isReadyKey = NSStringFromSelector(@selector(isReady));
+        if (sSelf->_isReady) {
+            ry_valueChange(sSelf, isReadyKey, ^{
+                sSelf->_isReady = NO;
+            });
+        }
+        
         if (relation.relier == sSelf) {
             if (nil == sSelf->_isRelierRelations) {
                 return;
@@ -211,6 +238,10 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
             }
             [sSelf->_isDemanderRelations addObject:relation];
         }
+        
+        ry_valueChange(sSelf, isReadyKey, ^{
+            sSelf->_isReady = YES;
+        });
     });
 }
 
@@ -227,7 +258,12 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
     }
     ry_lock(self, kOperationCancelLock, YES, ^(id holder){
         RYOperation *sSelf = holder;
-        sSelf->_isCancelled = YES;
+        if(sSelf->_isCancelled) {
+            return;
+        }
+        ry_valueChange(sSelf, NSStringFromSelector(@selector(isCancelled)), ^{
+            sSelf->_isCancelled = YES;
+        });
         [sSelf resume];
     });
 }
@@ -308,14 +344,12 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
 
     return ^RYOperation *(RYOperation *opt) {
         if (nil != opt) {
-            _isReady = NO;
             RYDependencyRelation *dpy = [[RYDependencyRelation alloc] init];
             dpy.demander = self;
             dpy.relier = opt;
             dpy.semaphore = dispatch_semaphore_create(0);
             [self addRelation:dpy];
             [opt addRelation:dpy];
-            _isReady = YES;
             
 #ifdef RYO_DEPENDENCY_CYCLE_CHECK_ON
             @autoreleasepool {
@@ -423,7 +457,6 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
         if (sSelf->_isFinished || sSelf->_isOperating) {
             return;
         }
-        sSelf->_isOperating = YES;
 
         dispatch_semaphore_t min_wait_semaphore = dispatch_semaphore_create(0);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sSelf.minWaitTimeForOperate)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -432,10 +465,14 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
         
         dispatch_queue_t apply_queue = CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf);
         if (!sSelf.isCancelled) {
-            __block NSArray<RYDependencyRelation *> *isDemanderRelations = nil;
+            NSString *isOperatingKey = NSStringFromSelector(@selector(isOperating));
+            ry_valueChange(sSelf, isOperatingKey, ^{
+                sSelf->_isOperating = YES;
+            });
+            
+            __block NSArray<RYDependencyRelation *> *isDemanderRelations = sSelf.isDemanderRelations.allObjects;
             ry_lock(sSelf, kOperationRelationLock, NO, ^(id holder){
                 isDemanderRelations = sSelf.isDemanderRelations.allObjects;
-
             });
             dispatch_apply(isDemanderRelations.count, apply_queue, ^(size_t index) {
                 RYDependencyRelation *relation = isDemanderRelations[index];
@@ -449,7 +486,9 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
             if (nil != sSelf->_operationBlock && !sSelf.isCancelled) {
                 sSelf->_operationBlock();
             }
-            sSelf->_isOperating = NO;
+            ry_valueChange(sSelf, isOperatingKey, ^{
+                sSelf->_isOperating = NO;
+            });
         }
         __block NSArray<RYDependencyRelation *> *isRelierRelations = nil;
         ry_lock(sSelf, kOperationRelationLock, NO, ^(id holder){
@@ -459,7 +498,9 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
             dispatch_semaphore_signal(isRelierRelations[index].semaphore);
         });
         
-        sSelf->_isFinished = YES;
+        ry_valueChange(sSelf, NSStringFromSelector(@selector(isFinished)), ^{
+            sSelf->_isFinished = YES;
+        });
         if (nil !=  sSelf->_operateDoneBlock) {
              sSelf->_operateDoneBlock();
         }
@@ -473,11 +514,9 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
             if (sSelf->_suspended_queue[i]) {
                 continue;
             }
-            dispatch_queue_t queue = ry_lock_get_lock_queue(sSelf, kOperationRelationLock, NO);
-            if (nil != queue) {
-                dispatch_suspend(queue);
-                sSelf->_suspended_queue[i] = queue;
-            }
+            dispatch_queue_t queue = ry_lock_get_lock_queue(sSelf, kOperationRelationLock, YES);
+            dispatch_suspend(queue);
+            sSelf->_suspended_queue[i] = queue;
         }
     });
 
@@ -669,7 +708,9 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
         NSString *isDemandersKey = NSStringFromSelector(@selector(isDemanderRelations));
         NSSet<RYOperation *> *notDemanderSet = sSelf->_operationSet ? [sSelf->_operationSet filteredSetUsingPredicate:[NSPredicate predicateWithFormat:@"%K == nil || %K[SIZE] == 0", isDemandersKey, isDemandersKey]] : nil;
         if (nil != notDemanderSet) {
-            sSelf->_isExcuting = YES;
+            ry_valueChange(sSelf, NSStringFromSelector(@selector(isExecuting)), ^{
+                sSelf->_isExcuting = YES;
+            });
             NSArray<RYOperation *> *sortedNotDemanderArray = [notDemanderSet sortedArrayUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:NSStringFromSelector(@selector(priority)) ascending:NO]]];
             
             void (^runOperation)(RYOperation *) = ^(RYOperation *opt) {
@@ -716,8 +757,12 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
                 dispatch_semaphore_wait(operate_done_semp, DISPATCH_TIME_FOREVER);
             }
             
-            sSelf->_isExcuting = NO;
-            sSelf->_isFinished = YES;
+            ry_valueChange(sSelf, NSStringFromSelector(@selector(isExecuting)), ^{
+                sSelf->_isExcuting = NO;
+            });
+            ry_valueChange(sSelf, NSStringFromSelector(@selector(isFinished)), ^{
+                sSelf->_isFinished = YES;
+            });
             if (nil != sSelf->_excuteDoneBlock) {
                 sSelf->_excuteDoneBlock();
             }
@@ -738,8 +783,9 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
         if (sSelf->_isCancelled) {
             return;
         }
-        sSelf->_isCancelled = YES;
-
+        ry_valueChange(sSelf, NSStringFromSelector(@selector(isCancelled)), ^{
+            sSelf->_isCancelled = YES;
+        });
         NSArray<RYOperation *> *operations = sSelf->_operationSet.allObjects;
         dispatch_apply(operations.count, CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf), ^(size_t index) {
             RYOperation *opt = operations[index];
@@ -749,9 +795,6 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
 }
 
 - (void)suspend {
-    if (_operationSet || _operationSet.count < 1) {
-        return;
-    }
     ry_lock(self, kQueueSuspendLock, YES, ^(id holder){
         RYQueue *sSelf = holder;
         if (nil == sSelf->_operationSet || sSelf->_operationSet.count < 1) {
@@ -769,9 +812,6 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
 }
 
 - (void)resume {
-    if (nil == _operationSet || _operationSet.count < 1) {
-        return;
-    }
     ry_lock(self, kQueueSuspendLock, YES, ^(id holder){
         RYQueue *sSelf = holder;
         if (nil == sSelf->_operationSet || sSelf->_operationSet.count < 1) {
@@ -797,6 +837,14 @@ dispatch_queue_t ry_lock(id holder, const void *key, BOOL async, RYLockedBlock l
         isCancelled = sSelf->_isCancelled;
     });
     return isCancelled;
+}
+
+- (BOOL)isFinished {
+    return _isFinished;
+}
+
+- (BOOL)isExcuting {
+    return _isExcuting;
 }
 
 @end
