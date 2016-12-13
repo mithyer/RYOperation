@@ -155,7 +155,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
 }
 
 + (RYOperation *)create {
-    return self.new;
+    return [[self alloc] init];
 }
 
 + (RYOperation *(^)(dispatch_block_t))createWithBlock {
@@ -192,27 +192,33 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
         RYOperation *sSelf = holder;
         
         NSString *isReadyKey = NSStringFromSelector(@selector(isReady));
-        if (sSelf->_isReady) {
-            ry_valueChange(sSelf, isReadyKey, ^{
-                sSelf->_isReady = NO;
-            });
-        }
-        
         if (relation.relier == sSelf) {
+            if (sSelf->_isReady) {
+                ry_valueChange(sSelf, isReadyKey, ^{
+                    sSelf->_isReady = NO;
+                });
+            }
             if (nil == sSelf->_isRelierRelations) {
                 sSelf->_isRelierRelations = [NSMutableSet set];
             }
             [sSelf->_isRelierRelations addObject:relation];
         } else if (relation.demander == sSelf) {
+            if (sSelf->_isReady) {
+                ry_valueChange(sSelf, isReadyKey, ^{
+                    sSelf->_isReady = NO;
+                });
+            }
             if (nil == sSelf->_isDemanderRelations) {
                 sSelf->_isDemanderRelations = [NSMutableSet set];
             }
             [sSelf->_isDemanderRelations addObject:relation];
         }
         
-        ry_valueChange(sSelf, isReadyKey, ^{
-            sSelf->_isReady = YES;
-        });
+        if (!sSelf->_isReady) {
+            ry_valueChange(sSelf, isReadyKey, ^{
+                sSelf->_isReady = YES;
+            });
+        }
     });
 }
 
@@ -221,27 +227,31 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
         RYOperation *sSelf = holder;
         
         NSString *isReadyKey = NSStringFromSelector(@selector(isReady));
-        if (sSelf->_isReady) {
+        if (relation.relier == sSelf) {
+            if (nil != sSelf->_isRelierRelations) {
+                if (sSelf->_isReady) {
+                    ry_valueChange(sSelf, isReadyKey, ^{
+                        sSelf->_isReady = NO;
+                    });
+                }
+                [sSelf->_isRelierRelations addObject:relation];
+            }
+        } else if (relation.demander == sSelf) {
+            if (nil != sSelf->_isDemanderRelations) {
+                if (sSelf->_isReady) {
+                    ry_valueChange(sSelf, isReadyKey, ^{
+                        sSelf->_isReady = NO;
+                    });
+                }
+                [sSelf->_isDemanderRelations addObject:relation];
+            }
+        }
+        
+        if (!sSelf->_isReady) {
             ry_valueChange(sSelf, isReadyKey, ^{
-                sSelf->_isReady = NO;
+                sSelf->_isReady = YES;
             });
         }
-        
-        if (relation.relier == sSelf) {
-            if (nil == sSelf->_isRelierRelations) {
-                return;
-            }
-            [sSelf->_isRelierRelations addObject:relation];
-        } else if (relation.demander == sSelf) {
-            if (nil == sSelf->_isDemanderRelations) {
-                return;
-            }
-            [sSelf->_isDemanderRelations addObject:relation];
-        }
-        
-        ry_valueChange(sSelf, isReadyKey, ^{
-            sSelf->_isReady = YES;
-        });
     });
 }
 
@@ -564,7 +574,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
 }
 
 + (RYQueue *)create {
-    return self.new;
+    return [[self alloc] init];
 }
 
 + (RYQueue *(^)(RYOperation *))createWithOperation {
