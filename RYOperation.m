@@ -482,7 +482,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
         dispatch_semaphore_t min_wait_semaphore = dispatch_semaphore_create(0);
         sSelf->_min_wait_semaphore = min_wait_semaphore;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sSelf.minWaitTimeForOperate)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            dispatch_semaphore_signal(_min_wait_semaphore);
+            dispatch_semaphore_signal(min_wait_semaphore);
         });
         
         dispatch_queue_t apply_queue = CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf);
@@ -504,7 +504,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
                 }
             });
             
-            dispatch_semaphore_wait(_min_wait_semaphore, DISPATCH_TIME_FOREVER);
+            dispatch_semaphore_wait(min_wait_semaphore, DISPATCH_TIME_FOREVER);
             if (nil != sSelf->_operationBlock && !sSelf.isCancelled) {
                 sSelf->_operationBlock();
             }
