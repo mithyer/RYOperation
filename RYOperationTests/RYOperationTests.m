@@ -103,38 +103,31 @@ NSArray<NSString *> *RYGetLog() {
     XCTestExpectation *expt = [self expectationWithDescription:NSStringFromSelector(_cmd)];
     RYLogClear();
     
-    RYOperation *opt1, *opt2, *opt3, *opt4;
+    RYOperation *opt1, *opt2, *opt3, *opt4 ,*opt5;
     RYQueue.createWithOperation(opt1 = RYOperation.createWithBlock(^{
-        sleep(1);
         RYLog(@"1");
-    }).setName(@"opt1")).addOperation(opt2 = RYOperation.createWithBlock(^{
-        sleep(1);
+    })).addOperation(opt2 = RYOperation.createWithBlock(^{
         RYLog(@"2");
-    }).setName(@"opt2")).addOperation(opt3 = RYOperation.createWithBlock(^{
-        sleep(1);
+    })).addOperation(opt3 = RYOperation.createWithBlock(^{
         RYLog(@"3");
-    }).setName(@"opt3")).addOperation(opt4 = RYOperation.createWithBlock(^{
-        sleep(1);
+    })).addOperation(opt4 = RYOperation.createWithBlock(^{
         RYLog(@"4");
-    }).setName(@"opt4")).setBeforeExcuteBlock(^{
+    })).addOperation(opt5 = RYOperation.createWithBlock(^{
+        RYLog(@"5");
+    })).setBeforeExcuteBlock(^(RYQueue *queue){
         RYLog(@"before");
         opt1.addDependency(opt2);
         opt2.addDependency(opt3);
         opt2.addDependency(opt4);
         opt3.addDependency(opt4);
-    }).setOperationWillStartBlock(^(RYOperation *opt) {
-        if ([opt.name isEqualToString:@"opt2"]) {
-            [opt cancel];
-        }
-    }).setExcuteDoneBlock(^{
+        opt4.addDependency(opt5);
+    }).setExcuteDoneBlock(^(RYQueue *queue){
         RYLog(@"done");
         [expt fulfill];
     }).excute();
     
-    RYLog(@"5");
-    
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
-        NSArray *expectRes = @[@"before", @"5", @"4", @"3", @"done"];
+        NSArray *expectRes = @[@"before", @"5", @"4", @"3", @"2", @"1", @"done"];
         XCTAssert([RYGetLog() isEqualToArray:expectRes]);
     }];
 }
@@ -144,33 +137,81 @@ NSArray<NSString *> *RYGetLog() {
     XCTestExpectation *expt = [self expectationWithDescription:NSStringFromSelector(_cmd)];
     RYLogClear();
     
-    RYOperation *opt1, *opt2;
-    RYQueue *queue1 = RYQueue.createWithOperation(opt1 = RYOperation.createWithBlock(^{
-        sleep(1);
-        RYLog(@"1");
-    })).setExcuteDoneBlock(^{
-        RYLog(@"done1");
+    
+    dispatch_group_t group_t = dispatch_group_create();
+    
+    dispatch_group_enter(group_t);
+    dispatch_group_enter(group_t);
+    
+    dispatch_group_notify(group_t, dispatch_get_main_queue(), ^{
         [expt fulfill];
     });
+
     
-    opt2 = RYOperation.createWithBlock(^{
+    RYOperation *opt1, *opt2, *opt3, *opt4 ,*opt5;
+    RYQueue *queue1 = RYQueue.create.addOperation(opt1 = RYOperation.createWithBlock(^{
+        RYLog(@"1");
+    })).addOperation(opt2 = RYOperation.createWithBlock(^{
         RYLog(@"2");
-    }).setMinWaitTimeForOperate(3 * NSEC_PER_SEC);
+    })).addOperation(opt3 = RYOperation.createWithBlock(^{
+        RYLog(@"3");
+    })).setExcuteDoneBlock(^(RYQueue *queue){
+        dispatch_group_leave(group_t);
+    });
     
-    RYQueue *queue2 = RYQueue.create.addOperation(opt2).setExcuteDoneBlock(^{
-        RYLog(@"done2");
+    RYQueue *queue2 = RYQueue.create.addOperation(opt4 = RYOperation.createWithBlock(^{
+        RYLog(@"4");
+    })).addOperation(opt5 = RYOperation.createWithBlock(^{
+        RYLog(@"5");
+    })).setExcuteDoneBlock(^(RYQueue *queue){
+        dispatch_group_leave(group_t);
     });
     
     opt1.addDependency(opt2);
+    opt2.addDependency(opt3);
+    opt2.addDependency(opt4);
+    opt3.addDependency(opt4);
+    opt4.addDependency(opt5);
     
-    RYLog(@"3");
+    RYLog(@"before");
 
     queue1.excute();
     queue2.excute();
     
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
-        NSArray *expectRes = @[@"3", @"2", @"done2", @"1", @"done1"];
+        NSArray *expectRes = @[@"before", @"5", @"4", @"3", @"2", @"1"];
+        XCTAssert([RYGetLog() isEqualToArray:expectRes]);
+    }];
+}
+
+- (void)test_operation_cancel {
+    XCTestExpectation *expt = [self expectationWithDescription:NSStringFromSelector(_cmd)];
+    RYLogClear();
+    
+    RYOperation *opt1, *opt2, *opt3;
+    RYQueue.create.addOperation(opt1 = RYOperation.createWithBlock(^{
+        RYLog(@"1");
+    })).addOperation(opt2 = RYOperation.createWithBlock(^{
+        RYLog(@"2");
+    })).addOperation(opt3 = RYOperation.createWithBlock(^{
+        RYLog(@"3");
+    })).setBeforeExcuteBlock(^(RYQueue *queue){
+        opt1.addDependency(opt2);
+        opt2.addDependency(opt3);
+    }).setOperationWillStartBlock(^(RYQueue *queue, RYOperation *opt){
+        if (opt == opt1) {
+            [opt cancel];
+        }
+    }).setExcuteDoneBlock(^(RYQueue *queue){
+        if (opt1.isCancelled) {
+            RYLog(@"done");
+        }
+        [expt fulfill];
+    }).excute();
+    
+    [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
+        NSArray *expectRes = @[@"3", @"2", @"done"];
         XCTAssert([RYGetLog() isEqualToArray:expectRes]);
     }];
 }
@@ -181,34 +222,25 @@ NSArray<NSString *> *RYGetLog() {
     RYLogClear();
     
     RYOperation *opt1, *opt2, *opt3;
-    
-    opt1 = RYOperation.createWithBlock(^{
+    RYQueue.create.addOperation(opt1 = RYOperation.createWithBlock(^{
         RYLog(@"1");
-        sleep(1);
-    }).setName(@"opt1");
-    
-    opt2 = RYOperation.createWithBlock(^{
+    })).addOperation(opt2 = RYOperation.createWithBlock(^{
         RYLog(@"2");
-        sleep(1);
-    }).setName(@"opt2");
-    
-    opt3 = RYOperation.createWithBlock(^{
+    })).addOperation(opt3 = RYOperation.createWithBlock(^{
         RYLog(@"3");
-        sleep(1);
-    }).setName(@"opt3");
-    
-    opt1.addDependency(opt2.addDependency(opt3));
-    
-    RYQueue *queue = RYQueue.create.addOperations(@[opt1, opt2, opt3]).setExcuteDoneBlock(^{
-        RYLog(@"done");
+    })).setBeforeExcuteBlock(^(RYQueue *queue){
+        opt1.addDependency(opt2);
+        opt2.addDependency(opt3);
+    }).setOperationWillStartBlock(^(RYQueue *queue, RYOperation *opt){
+        if (opt == opt1) {
+            [queue cancel];
+        }
+    }).setExcuteDoneBlock(^(RYQueue *queue){
+        if (queue.isCancelled) {
+            RYLog(@"done");
+        }
         [expt fulfill];
-    });
-    
-    queue.excute();
-    
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [queue cancel];
-    });
+    }).excute();
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
         NSArray *expectRes = @[@"3", @"2", @"done"];
@@ -232,10 +264,10 @@ NSArray<NSString *> *RYGetLog() {
         RYLog(@"2");
     });
     
-    RYQueue *queue = RYQueue.create.addOperations(@[opt1, opt2]).setExcuteDoneBlock(^{
+    RYQueue *queue = RYQueue.create.addOperations(@[opt1, opt2]).setExcuteDoneBlock(^(RYQueue *queue){
         RYLog(@"done");
         [expt fulfill];
-    }).setBeforeExcuteBlock(^{
+    }).setBeforeExcuteBlock(^(RYQueue *queue){
         opt2.addDependency(opt1);
     }).excute();
     

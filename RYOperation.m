@@ -274,7 +274,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
     if(_isCancelled) {
         return;
     }
-    ry_lock(self, kOperationCancelLock, YES, ^(id holder){
+    ry_lock(self, kOperationCancelLock, NO, ^(id holder){
         RYOperation *sSelf = holder;
         if(sSelf->_isCancelled) {
             return;
@@ -530,7 +530,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
 }
 
 - (void)suspend {
-    ry_lock(self, kOperationSuspendLock, YES, ^(id holder){
+    ry_lock(self, kOperationSuspendLock, NO, ^(id holder){
         RYOperation *sSelf = holder;
         for (NSUInteger i = 0; i < OperationSuspendedQueueCount; ++i) {
             if (sSelf->_suspended_queue[i]) {
@@ -545,7 +545,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
 }
 
 - (void)resume {
-    ry_lock(self, kOperationSuspendLock, YES, ^(id holder){
+    ry_lock(self, kOperationSuspendLock, NO, ^(id holder){
         RYOperation *sSelf = holder;
         for (NSUInteger i = 0; i < OperationSuspendedQueueCount; ++i) {
             dispatch_queue_t queue = sSelf->_suspended_queue[i];
@@ -574,9 +574,9 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
     BOOL _sync;
     
     RYQueue *(^_excuteBlock)();
-    dispatch_block_t _beforeExcuteBlock;
-    dispatch_block_t _excuteDoneBlock;
-    OperationWillStartBlock _operationWillStartBlock;
+    QueueBlock _beforeExcuteBlock;
+    QueueBlock _excuteDoneBlock;
+    QueueAndOperationBlock _operationWillStartBlock;
     __weak dispatch_queue_t _excuteQueue;
 
     NSMutableSet<RYOperation *> *_operationSet;
@@ -616,7 +616,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
                 return nil;
             }
             if (nil != sSelf->_beforeExcuteBlock) {
-                sSelf->_beforeExcuteBlock();
+                sSelf->_beforeExcuteBlock(sSelf);
             }
             [sSelf excuteStart];
             return sSelf;
@@ -677,22 +677,22 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
     };
 }
 
-- (RYQueue *(^)(dispatch_block_t))setBeforeExcuteBlock {
-    return ^RYQueue* (dispatch_block_t beforeBlock) {
+- (RYQueue *(^)(QueueBlock))setBeforeExcuteBlock {
+    return ^RYQueue* (QueueBlock beforeBlock) {
         _beforeExcuteBlock = beforeBlock;
         return self;
     };
 }
 
-- (RYQueue *(^)(dispatch_block_t))setExcuteDoneBlock {
-    return ^RYQueue* (dispatch_block_t doneBlock) {
+- (RYQueue *(^)(QueueBlock))setExcuteDoneBlock {
+    return ^RYQueue* (QueueBlock doneBlock) {
         _excuteDoneBlock = doneBlock;
         return self;
     };
 }
 
-- (RYQueue *(^)(OperationWillStartBlock))setOperationWillStartBlock {
-    return ^RYQueue* (OperationWillStartBlock willStartBlock) {
+- (RYQueue *(^)(QueueAndOperationBlock))setOperationWillStartBlock {
+    return ^RYQueue* (QueueAndOperationBlock willStartBlock) {
         _operationWillStartBlock = willStartBlock;
         return self;
     };
@@ -741,10 +741,10 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
                 if (opt->_isOperating || opt->_isFinished) {
                     return;
                 }
-                ry_lock(opt, kOperationOperateLock, YES, ^(id holder){
+                ry_lock(opt, kOperationOperateLock, NO, ^(id holder){
                     RYOperation *sOpt = holder;
                     if (nil != sSelf && nil != sSelf->_operationWillStartBlock && !sOpt->_isOperating && !sOpt->_isFinished ) {
-                        sSelf->_operationWillStartBlock(sOpt);
+                        sSelf->_operationWillStartBlock(sSelf, sOpt);
                     }
                 });
                 [opt operate];
@@ -788,7 +788,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
                 sSelf->_isFinished = YES;
             });
             if (nil != sSelf->_excuteDoneBlock) {
-                sSelf->_excuteDoneBlock();
+                sSelf->_excuteDoneBlock(sSelf);
             }
         }
     });
@@ -802,7 +802,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
     if (_isCancelled) {
         return;
     }
-    ry_lock(self, kQueueCancelAllOperationsLock, YES, ^(id holder){
+    ry_lock(self, kQueueCancelAllOperationsLock, NO, ^(id holder){
         RYQueue *sSelf = holder;
         if (sSelf->_isCancelled) {
             return;
@@ -818,8 +818,20 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
     });
 }
 
+- (BOOL)isCancelled {
+    if (_isCancelled) {
+        return YES;
+    }
+    __block BOOL isCancelled = NO;
+    ry_lock(self, kQueueCancelAllOperationsLock, NO, ^(id holder){
+        RYQueue *sSelf = holder;
+        isCancelled = sSelf->_isCancelled;
+    });
+    return isCancelled;
+}
+
 - (void)suspend {
-    ry_lock(self, kQueueSuspendLock, YES, ^(id holder){
+    ry_lock(self, kQueueSuspendLock, NO, ^(id holder){
         RYQueue *sSelf = holder;
         if (nil == sSelf->_operationSet || sSelf->_operationSet.count < 1) {
             return;
@@ -836,7 +848,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
 }
 
 - (void)resume {
-    ry_lock(self, kQueueSuspendLock, YES, ^(id holder){
+    ry_lock(self, kQueueSuspendLock, NO, ^(id holder){
         RYQueue *sSelf = holder;
         if (nil == sSelf->_operationSet || sSelf->_operationSet.count < 1) {
             return;
@@ -851,17 +863,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
     });
 }
 
-- (BOOL)isCancelled {
-    if (_isCancelled) {
-        return YES;
-    }
-    __block BOOL isCancelled = NO;
-    ry_lock(self, kQueueCancelAllOperationsLock, NO, ^(id holder){
-        RYQueue *sSelf = holder;
-        isCancelled = sSelf->_isCancelled;
-    });
-    return isCancelled;
-}
+
 
 - (BOOL)isFinished {
     return _isFinished;

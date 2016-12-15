@@ -50,7 +50,8 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
 @end
 
 
-typedef void (^OperationWillStartBlock)(RYOperation *);
+typedef void (^QueueAndOperationBlock)(RYQueue *, RYOperation *);
+typedef void (^QueueBlock)(RYQueue *);
 
 @interface RYQueue : NSObject
 
@@ -63,9 +64,9 @@ typedef void (^OperationWillStartBlock)(RYOperation *);
 - (RYQueue *(^)(NSInteger ))setIdentifier;
 - (RYQueue *(^)(BOOL async /* default: YES */))setAsync;
 - (RYQueue *(^)(NSUInteger))setMaxConcurrentOperationCount;
-- (RYQueue *(^)(dispatch_block_t))setBeforeExcuteBlock;
-- (RYQueue *(^)(dispatch_block_t))setExcuteDoneBlock;
-- (RYQueue *(^)(OperationWillStartBlock))setOperationWillStartBlock;
+- (RYQueue *(^)(QueueBlock))setBeforeExcuteBlock;
+- (RYQueue *(^)(QueueBlock))setExcuteDoneBlock;
+- (RYQueue *(^)(QueueAndOperationBlock))setOperationWillStartBlock;
 - (RYQueue *(^)())excute;
 
 - (NSSet<RYOperation *> *(^)(NSString *))operationsForName;
