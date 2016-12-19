@@ -35,26 +35,26 @@ enum {
 
 #pragma mark - C function
 
-dispatch_queue_t ry_lock_get_lock_queue(id holder, const void *key, BOOL createIfNotExist) {
+NS_INLINE dispatch_queue_t ry_lock_get_lock_queue(id holder, const void *key, BOOL createIfNotExist) {
     static dispatch_once_t once_t;
-    static dispatch_semaphore_t add_holder_semp_semp;
+    static dispatch_semaphore_t lock;
     dispatch_once(&once_t, ^{
-        add_holder_semp_semp = dispatch_semaphore_create(1);
+        lock = dispatch_semaphore_create(1);
     });
     
-    dispatch_semaphore_wait(add_holder_semp_semp, DISPATCH_TIME_FOREVER);
+    dispatch_semaphore_wait(lock, DISPATCH_TIME_FOREVER);
     
-    static void *holder_semp_key = &holder_semp_key;
-    dispatch_semaphore_t holder_semp = objc_getAssociatedObject(holder, holder_semp_key);
-    if (!holder_semp) {
-        holder_semp = dispatch_semaphore_create(1);
-        objc_setAssociatedObject(holder_semp, holder_semp_key, holder_semp, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    static void *holder_lock_key = &holder_lock_key;
+    dispatch_semaphore_t holder_lock = objc_getAssociatedObject(holder, holder_lock_key);
+    if (!holder_lock) {
+        holder_lock = dispatch_semaphore_create(1);
+        objc_setAssociatedObject(holder, holder_lock_key, holder_lock, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     
-    dispatch_semaphore_signal(add_holder_semp_semp);
+    dispatch_semaphore_signal(lock);
     
     
-    dispatch_semaphore_wait(holder_semp, DISPATCH_TIME_FOREVER);
+    dispatch_semaphore_wait(holder_lock, DISPATCH_TIME_FOREVER);
     
     static void *seriral_queue_map_key = &seriral_queue_map_key;
     NSMapTable<NSNumber *, dispatch_queue_t> *serial_queue_map = objc_getAssociatedObject(holder, seriral_queue_map_key);
@@ -71,7 +71,7 @@ dispatch_queue_t ry_lock_get_lock_queue(id holder, const void *key, BOOL createI
         [serial_queue_map setObject:serial_queue forKey:numKey];
     }
     
-    dispatch_semaphore_signal(holder_semp);
+    dispatch_semaphore_signal(holder_lock);
     
     return serial_queue;
 }
@@ -154,7 +154,7 @@ NS_INLINE void ry_valueChange(NSObject *target, NSString *key, dispatch_block_t 
     BOOL _isCancelled;
     BOOL _isReady;
     
-    @public
+    @package
     __weak RYQueue *_queue;
     dispatch_block_t _operateDoneBlock;
     
