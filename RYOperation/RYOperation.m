@@ -11,6 +11,7 @@
 
 #define DISPATCH_QUENE_LABEL(ID) [NSString stringWithFormat:@"queue_label: %@, line:%d, id:%@",[[NSString stringWithUTF8String:__FILE__] lastPathComponent], __LINE__, ID].UTF8String
 #define CREATE_DISPATCH_SERIAL_QUEUE(ID) dispatch_queue_create(DISPATCH_QUENE_LABEL(ID), DISPATCH_QUEUE_SERIAL)
+#define CREATE_DISPATCH_CONCURRENT_QUEUE(ID) dispatch_queue_create(DISPATCH_QUENE_LABEL(ID), DISPATCH_QUEUE_CONCURRENT)
 
 
 #pragma mark - C function
@@ -146,7 +147,6 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *superOpt, RYOperation
 
 @implementation RYOperation {
     @private
-    dispatch_block_t _operationBlock;
 
     NSString* _name;
     RYOperationPriority _priority;
@@ -157,6 +157,7 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *superOpt, RYOperation
     
     @package
     __weak RYQueue *_queue;
+    dispatch_block_t _operationBlock;
     dispatch_block_t _operateDoneBlock;
     NSMutableSet *_relationSet;
 }
@@ -320,6 +321,9 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
                     RYOperation *sSelf = holder;
                     sSelf.state = kRYOperationStateFinished;
                 });
+                if (nil != sSelf->_operationFinishedBlock) {
+                    sSelf->_operationFinishedBlock();
+                }
             }
             sSelf->_operateDoneBlock();
             [sSelf.superOperations.allObjects enumerateObjectsUsingBlock:^(RYOperation * _Nonnull opt, NSUInteger idx, BOOL * _Nonnull stop) {
@@ -429,6 +433,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
     }
     ry_lock(self, @selector(addOperation:), NO, ^(id holder) {
         RYQueue *sSelf = holder;
+        opt->_queue = sSelf;
         [sSelf->_operationSet addObject:opt];
     });
 }
@@ -436,6 +441,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 - (void)removeOperation:(RYOperation *)opt {
     ry_lock(self, @selector(addOperation:), NO, ^(id holder) {
         RYQueue *sSelf = holder;
+        opt->_queue = nil;
         [sSelf->_operationSet removeObject:opt];
     });
 }
@@ -471,21 +477,27 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
         if (shouldReturn) {
             return;
         }
-        //NSUInteger maximumConcurrentOperationCount = sSelf.maximumConcurrentOperationCount;
-        //dispatch_semaphore_t excute_max_operation_count_semp = dispatch_semaphore_create(maximumConcurrentOperationCount);
         dispatch_semaphore_t operate_done_semp = dispatch_semaphore_create(0);
         
         __block NSArray<RYOperation *> *operationArray = nil;
         ry_lock(self, @selector(addOperation:), NO, ^(id holder) {
             operationArray = [sSelf->_operationSet.allObjects sortedArrayUsingDescriptors:@[[[NSSortDescriptor alloc] initWithKey:NSStringFromSelector(@selector(priority)) ascending:NO]]];
         });
+        
+        dispatch_semaphore_t excute_max_operation_count_semp = dispatch_semaphore_create(sSelf.maximumConcurrentOperationCount);
+        dispatch_queue_t operateQueue = CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf.description);
+        
         dispatch_apply(operationArray.count, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, kNilOptions), ^(size_t idx) {
             RYOperation *opt = operationArray[idx];
             opt->_operateDoneBlock = ^{
-                //dispatch_semaphore_signal(excute_max_operation_count_semp);
                 dispatch_semaphore_signal(operate_done_semp);
             };
-            //dispatch_semaphore_wait(excute_max_operation_count_semp, DISPATCH_TIME_FOREVER);
+            dispatch_block_t optBlock = opt->_operationBlock;
+            opt->_operationBlock = ^{
+                dispatch_semaphore_wait(excute_max_operation_count_semp, DISPATCH_TIME_FOREVER);
+                dispatch_sync(operateQueue, optBlock);
+                dispatch_semaphore_signal(excute_max_operation_count_semp);
+            };
             [opt operate];
         });
         [operationArray enumerateObjectsUsingBlock:^(RYOperation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {

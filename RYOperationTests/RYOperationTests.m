@@ -9,10 +9,6 @@
 #import <XCTest/XCTest.h>
 #import "RYOperation.h"
 
-#ifdef RYLog
-#undef RYLog
-#endif
-
 static const void *const klogKey = &klogKey;
 static NSMutableArray *s_logArr = nil;
 
@@ -239,6 +235,9 @@ NSArray<NSString *> *RYGetLog() {
         size_t idx = arc4random()%opts2.count;
         RYOperation *opt2 = [opts2 objectAtIndex:idx];
         [opt addDependency:opt2];
+        if (opt != opts1.firstObject) {
+            [opt addDependency:opts1.firstObject];
+        }
     }
 
     
@@ -299,7 +298,6 @@ NSArray<NSString *> *RYGetLog() {
     });
     
     [self waitForExpectationsWithTimeout:20 handler:^(NSError * _Nullable error) {
-        NSLog(@"%@", RYGetLog());
         XCTAssert([RYGetLog() isEqualToArray:exptArray]);
     }];
 }
@@ -339,7 +337,6 @@ NSArray<NSString *> *RYGetLog() {
     [queue excute];
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
-        NSLog(@"====>RYGetLog: %@", RYGetLog());
         XCTAssert([RYGetLog() isEqualToArray:exptArray]);
     }];
 }
@@ -389,8 +386,6 @@ NSArray<NSString *> *RYGetLog() {
         NSArray *logArray = [RYGetLog() sortedArrayUsingComparator:^NSComparisonResult(NSString *  _Nonnull obj1, NSString *  _Nonnull obj2) {
             return [obj1 compare:obj2 options:NSNumericSearch];
         }];
-        NSLog(@"%@", logArray);
-        NSLog(@"%@", exptArray);
         XCTAssert([logArray isEqualToArray:exptArray]);
     }];
 }
@@ -436,11 +431,46 @@ NSArray<NSString *> *RYGetLog() {
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
         NSArray *expectRes = @[@"1", @"bs", @"br", @"2", @"done"];
-        NSLog(@"====>RYGetLog: %@", RYGetLog());
         XCTAssert([RYGetLog() isEqualToArray:expectRes]);
     }];
 }
 
-
+- (void)test_max_concurrent_operation {
+    XCTestExpectation *expt = [self expectationWithDescription:NSStringFromSelector(_cmd)];
+    RYLogClear();
+    
+    RYQueue *queue = [RYQueue queue];
+    queue.maximumConcurrentOperationCount = 5;
+    size_t count = 50 + 50%arc4random();
+    __block size_t max = 0;
+    for (size_t i = 0; i < count; ++i) {
+        RYOperation *opt = [RYOperation operationWithBlock:^{
+            ry_lock(NSObject.class, @selector(test_max_concurrent_operation), NO, ^(id holder) {
+                ++max;
+            });
+            RYLog(@(max).stringValue);
+            ry_lock(NSObject.class, @selector(test_max_concurrent_operation), NO, ^(id holder) {
+                --max;
+            });
+        }];
+        [queue addOperation:opt];
+    }
+    queue.excuteDoneBlock = ^(RYQueue *queue) {
+        [expt fulfill];
+    };
+    [queue excute];
+    
+    [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
+        __block BOOL success = YES;
+        [RYGetLog() enumerateObjectsUsingBlock:^(NSString * _Nonnull log, NSUInteger idx, BOOL * _Nonnull stop) {
+            if (log.integerValue > queue.maximumConcurrentOperationCount) {
+                success = NO;
+                *stop = YES;
+            }
+        }];
+        success &= max == 0;
+        XCTAssert(success);
+    }];
+}
 
 @end

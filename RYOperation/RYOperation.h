@@ -9,7 +9,6 @@
 #import <Foundation/Foundation.h>
 
 #define RYO_DEPENDENCY_CYCLE_CHECK_ON
-#define RYLog NSLog
 
 typedef NS_ENUM(NSInteger, RYOperationPriority) {
     kRYOperationPriorityVeryLow = -1000,
@@ -52,9 +51,9 @@ typedef NS_OPTIONS(NSUInteger, RYOperationState) {
 @property (nonatomic, assign) RYOperationPriority priority;
 @property (nonatomic, assign) dispatch_time_t maximumWaitTimeForOperate;
 @property (nonatomic, assign) dispatch_time_t minimumWaitTimeForOperate;
-
-@property (nonatomic, readonly) NSSet<RYOperation *> *allDependencies;
+@property (nonatomic, strong, readonly) NSSet<RYOperation *> *allDependencies;
 @property (nonatomic, assign, readonly) RYOperationState state;
+@property (nonatomic, copy) dispatch_block_t operationFinishedBlock;
 
 @end
 
@@ -73,7 +72,7 @@ typedef void (^QueueBlock)(RYQueue *queue);
 - (void)addOperation:(RYOperation *)opt;
 - (void)removeOperation:(RYOperation *)opt;
 
-@property (nonatomic, assign) NSUInteger identifier;
+@property (nonatomic, copy) NSString *name;
 @property (nonatomic, assign) BOOL async;
 @property (nonatomic, assign) NSUInteger maximumConcurrentOperationCount;
 @property (nonatomic, copy) QueueBlock excuteDoneBlock;
