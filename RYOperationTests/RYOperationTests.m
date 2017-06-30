@@ -55,7 +55,6 @@ NSArray<NSString *> *RYGetLog() {
 }
 
 - (void)test_rylock {
-    static const void *const kLockId = &kLockId;
     size_t max = arc4random()%100000;
     __block size_t t = 0;
     
@@ -65,19 +64,17 @@ NSArray<NSString *> *RYGetLog() {
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         for (size_t i = 0; i < max; ++i) {
-            ry_lock(NSObject.class, kLockId, YES, ^(id holder){
+            ry_lock(NSObject.class, @selector(test_rylock), YES, ^(id holder){
                 ++t;
             });
         }
-        ry_lock(NSObject.class, kLockId, YES, ^(id holder){
-            dispatch_group_leave(group_t);
-        });
+        dispatch_group_leave(group_t);
     });
 
     dispatch_group_enter(group_t);
-    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+    dispatch_async(dispatch_queue_create(0, 0), ^{
         for (size_t i = 0; i < max; ++i) {
-            ry_lock(NSObject.class, kLockId, NO, ^(id holder){
+            ry_lock(NSObject.class, @selector(test_rylock), NO, ^(id holder){
                 ++t;
             });
         }
