@@ -58,22 +58,36 @@ NS_INLINE dispatch_queue_t ry_lock_get_lock_queue(id holder, const void *key, BO
 }
 
 
-dispatch_queue_t ry_lock(id holder, const void *lock_key, BOOL async, RYLockedBlock lockedBlock) {
-    if (NULL == lock_key || nil == holder) {
+dispatch_queue_t ry_lock(id holder, const void *lock_key, BOOL async, qos_class_t qos_class, void (^lockedBlock)(id holder)) {
+    if (NULL == lock_key || nil == holder || nil == lockedBlock) {
         return nil;
     }
     dispatch_queue_t queue = ry_lock_get_lock_queue(holder, lock_key, YES);
     __weak typeof(holder) wHolder = holder;
     if (nil != lockedBlock) {
-        (async ? dispatch_async : dispatch_sync)(queue, ^{
+        dispatch_block_t block = dispatch_block_create_with_qos_class(DISPATCH_BLOCK_ENFORCE_QOS_CLASS, qos_class, 0, ^{
             __strong typeof(wHolder) sHoloder = wHolder;
             if (nil != sHoloder) {
                 lockedBlock(sHoloder);
             }
         });
+        (async ? dispatch_async : dispatch_sync)(queue, block);
     }
-    
     return queue;
+}
+
+dispatch_queue_t ry_operation_lock(RYOperation *operation, const void *lock_key, BOOL async, void (^lockedBlock)(RYOperation *operation)) {
+    if (nil == lockedBlock) {
+        return nil;
+    }
+    return ry_lock(operation, lock_key, async, (qos_class_t)operation.qos, lockedBlock);
+}
+
+dispatch_queue_t ry_queue_lock(RYQueue *queue, const void *lock_key, BOOL async, void (^lockedBlock)(RYQueue *queue)) {
+    if (nil == lockedBlock) {
+        return nil;
+    }
+    return ry_lock(queue, lock_key, async, (qos_class_t)queue.qos, lockedBlock);
 }
 
 
@@ -119,7 +133,7 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *superOpt, RYOperation
     });
     static const void *kLockKey = &kLockKey;
     __block dispatch_semaphore_t semph = nil;
-    ry_lock(RYOperationRelation.class, kLockKey, NO, ^(id holder) {
+    ry_lock(RYOperationRelation.class, kLockKey, NO, (qos_class_t)superOpt.qos, ^(id holder) {
         RYOperationRelation *relation = [[RYOperationRelation alloc] init];
         relation.superRelation = superOpt;
         relation.subRelation = subOpt;
@@ -158,7 +172,7 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *superOpt, RYOperation
     @package
     __weak RYQueue *_queue;
     dispatch_block_t _operationBlock;
-    dispatch_block_t _operateDoneBlock;
+    dispatch_block_t _operationOverBlock;
     NSMutableSet *_relationSet;
 }
 
@@ -180,6 +194,7 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *superOpt, RYOperation
 + (instancetype)operationWithBlock:(dispatch_block_t)block {
     RYOperation *opt = [[self alloc] init];
     opt->_operationBlock = block;
+    //dispatch_block_create(<#dispatch_block_flags_t flags#>, <#^(void)block#>)
     return opt;
 }
 
@@ -212,7 +227,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
     if (![opt isKindOfClass:RYOperation.class]) {
         return;
     }
-    ry_lock(self, @selector(addDependency:), NO, ^(id holder) {
+    ry_operation_lock(self, @selector(addDependency:), NO, ^(id holder) {
         RYOperation *sSelf = holder;
 #ifdef RYO_DEPENDENCY_CYCLE_CHECK_ON
         NSCParameterAssert(!seekCycle(sSelf, opt));
@@ -226,7 +241,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
     if (![opt isKindOfClass:RYOperation.class]) {
         return;
     }
-    ry_lock(self, @selector(addDependency:), NO, ^(id holder) {
+    ry_operation_lock(self, @selector(addDependency:), NO, ^(id holder) {
         RYOperation *sSelf = holder;
         [sSelf.subOperations removeObject:opt];
         [opt.superOperations removeObject:sSelf];
@@ -234,7 +249,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)removeAllDependencies {
-    ry_lock(self, @selector(addDependency:), NO, ^(id holder) {
+    ry_operation_lock(self, @selector(addDependency:), NO, ^(id holder) {
         RYOperation *sSelf = holder;
         [sSelf.subOperations enumerateObjectsUsingBlock:^(RYOperation * _Nonnull opt, BOOL * _Nonnull stop) {
             [opt.superOperations removeObject:sSelf];
@@ -245,10 +260,10 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 
 - (void)operate {
     static const void *kMainOperateKey = &kMainOperateKey;
-    ry_lock(self, kMainOperateKey, YES, ^(id holder) {
+    ry_operation_lock(self, kMainOperateKey, YES, ^(id holder) {
         RYOperation *sSelf = holder;
         __block RYOperationState state;
-        ry_lock(sSelf, @selector(state), NO, ^(id holder) {
+        ry_operation_lock(sSelf, @selector(state), NO, ^(id holder) {
             RYOperation *sSelf = holder;
             state = sSelf->_state;
             if (state == kRYOperationStateNotBegin) {
@@ -259,21 +274,27 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
             return;
         }
         if (state == kRYOperationStateCancelled) {
-            sSelf->_operateDoneBlock();
+            sSelf->_operationOverBlock();
+            if (nil != sSelf->_operationDoneBlock) {
+                sSelf->_operationDoneBlock();
+            }
             [sSelf.superOperations.allObjects enumerateObjectsUsingBlock:^(RYOperation * _Nonnull opt, NSUInteger idx, BOOL * _Nonnull stop) {
                 dispatch_semaphore_signal(semaphoreForTwoOpetaions(opt, sSelf));
             }];
             return;
         }
         __block BOOL shouldReturn = NO;
-        ry_lock(sSelf, @selector(operate), NO, ^(id holder){
+        ry_operation_lock(sSelf, @selector(operate), NO, ^(id holder){
             __block BOOL cancelld = NO;
-            ry_lock(sSelf, @selector(state), NO, ^(id holder) {
+            ry_operation_lock(sSelf, @selector(state), NO, ^(id holder) {
                 RYOperation *sSelf = holder;
                 cancelld = sSelf->_state == kRYOperationStateCancelled;
             });
             if (cancelld) {
-                sSelf->_operateDoneBlock();
+                sSelf->_operationOverBlock();
+                if (nil != sSelf->_operationDoneBlock) {
+                    sSelf->_operationDoneBlock();
+                }
                 [sSelf.superOperations.allObjects enumerateObjectsUsingBlock:^(RYOperation * _Nonnull opt, NSUInteger idx, BOOL * _Nonnull stop) {
                     dispatch_semaphore_signal(semaphoreForTwoOpetaions(opt, sSelf));
                 }];
@@ -287,7 +308,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
                 dispatch_semaphore_signal(min_wait_semaphore);
             });
             __block NSSet<RYOperation *> *subOperations = nil;
-            ry_lock(sSelf, @selector(addDependency:), NO, ^(id holder) {
+            ry_operation_lock(sSelf, @selector(addDependency:), NO, ^(id holder) {
                 RYOperation *sSelf = holder;
                 subOperations = [sSelf->_subOperations copy];
             });
@@ -296,13 +317,13 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
             }];
             dispatch_semaphore_wait(min_wait_semaphore, DISPATCH_TIME_FOREVER);
         });
-        ry_lock(sSelf, @selector(operate), NO, ^(id holder){
+        ry_operation_lock(sSelf, @selector(operate), NO, ^(id holder){
             if (shouldReturn) {
                 return;
             }
             RYOperation *sSelf = holder;
             __block BOOL cancelld = NO;
-            ry_lock(sSelf, @selector(state), NO, ^(id holder) {
+            ry_operation_lock(sSelf, @selector(state), NO, ^(id holder) {
                 RYOperation *sSelf = holder;
                 cancelld = sSelf->_state == kRYOperationStateCancelled;
             });
@@ -310,8 +331,8 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
                 if (nil != sSelf->_operationBlock) {
                     sSelf->_operationBlock();
                 }
-                ry_lock(sSelf, @selector(state), NO, ^(id holder) {
-                    ry_lock(sSelf, @selector(suspend), YES, ^(id holder) {
+                ry_operation_lock(sSelf, @selector(state), NO, ^(id holder) {
+                    ry_operation_lock(sSelf, @selector(suspend), YES, ^(id holder) {
                         RYOperation *sSelf = holder;
                         if (nil != sSelf->_suspended_queue) {
                             dispatch_resume(sSelf->_suspended_queue);
@@ -321,11 +342,11 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
                     RYOperation *sSelf = holder;
                     sSelf.state = kRYOperationStateFinished;
                 });
-                if (nil != sSelf->_operationFinishedBlock) {
-                    sSelf->_operationFinishedBlock();
-                }
             }
-            sSelf->_operateDoneBlock();
+            sSelf->_operationOverBlock();
+            if (nil != sSelf->_operationDoneBlock) {
+                sSelf->_operationDoneBlock();
+            }
             [sSelf.superOperations.allObjects enumerateObjectsUsingBlock:^(RYOperation * _Nonnull opt, NSUInteger idx, BOOL * _Nonnull stop) {
                 dispatch_semaphore_signal(semaphoreForTwoOpetaions(opt, sSelf));
             }];
@@ -334,12 +355,12 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)cancel {
-    ry_lock(self, @selector(state), NO, ^(id holder) {
+    ry_operation_lock(self, @selector(state), NO, ^(id holder) {
         RYOperation *sSelf = holder;
         if (sSelf->_state == kRYOperationStateCancelled || sSelf->_state == kRYOperationStateFinished) {
             return;
         }
-        ry_lock(self, @selector(suspend), NO, ^(id holder){
+        ry_operation_lock(self, @selector(suspend), NO, ^(id holder){
             if (nil != sSelf->_suspended_queue) {
                 dispatch_resume(sSelf->_suspended_queue);
                 sSelf->_suspended_queue = nil;
@@ -350,12 +371,12 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)suspend {
-    ry_lock(self, @selector(state), NO, ^(id holder) {
+    ry_operation_lock(self, @selector(state), NO, ^(id holder) {
         RYOperation *sSelf = holder;
         if ((sSelf->_state | kRYOperationStateOperating) != kRYOperationStateOperating) {
             return;
         }
-        ry_lock(self, @selector(suspend), NO, ^(id holder){
+        ry_operation_lock(self, @selector(suspend), NO, ^(id holder){
             if (nil != sSelf->_suspended_queue) {
                 return;
             }
@@ -369,12 +390,12 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)resume {
-    ry_lock(self, @selector(state), NO, ^(id holder) {
+    ry_operation_lock(self, @selector(state), NO, ^(id holder) {
         RYOperation *sSelf = holder;
         if ((sSelf->_state & kRYOperationStateSuspended) != kRYOperationStateSuspended) {
             return;
         }
-        ry_lock(self, @selector(suspend), NO, ^(id holder){
+        ry_operation_lock(self, @selector(suspend), NO, ^(id holder){
             RYOperation *sSelf = holder;
             if (nil == sSelf->_suspended_queue) {
                 return;
@@ -431,7 +452,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
     if (![opt isKindOfClass:RYOperation.class]) {
         return;
     }
-    ry_lock(self, @selector(addOperation:), NO, ^(id holder) {
+    ry_queue_lock(self, @selector(addOperation:), NO, ^(id holder) {
         RYQueue *sSelf = holder;
         opt->_queue = sSelf;
         [sSelf->_operationSet addObject:opt];
@@ -439,7 +460,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)removeOperation:(RYOperation *)opt {
-    ry_lock(self, @selector(addOperation:), NO, ^(id holder) {
+    ry_queue_lock(self, @selector(addOperation:), NO, ^(id holder) {
         RYQueue *sSelf = holder;
         opt->_queue = nil;
         [sSelf->_operationSet removeObject:opt];
@@ -448,7 +469,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 
 - (NSSet<RYOperation *> *)allOperations {
     __block NSSet<RYOperation *> *operations = nil;
-    ry_lock(self, @selector(addOperation:), NO, ^(id holder){
+    ry_queue_lock(self, @selector(addOperation:), NO, ^(id holder){
         RYQueue *sSelf = holder;
         operations = [sSelf->_operationSet copy];
     });
@@ -463,11 +484,12 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)excute {
-    ry_lock(self, @selector(excute), !_sync, ^(id holder){
+    
+    ry_queue_lock(self, @selector(excute), !_sync, ^(id holder){
         RYQueue *sSelf = holder;
         
         __block BOOL shouldReturn = NO;
-        ry_lock(sSelf, @selector(status), NO, ^(id holder) {
+        ry_queue_lock(sSelf, @selector(status), NO, ^(id holder) {
             RYQueue *sSelf = holder;
             shouldReturn = sSelf->_status != kRYQueueStatusNotBegin;
             if (sSelf->_status == kRYQueueStatusNotBegin) {
@@ -480,7 +502,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
         dispatch_semaphore_t operate_done_semp = dispatch_semaphore_create(0);
         
         __block NSArray<RYOperation *> *operationArray = nil;
-        ry_lock(self, @selector(addOperation:), NO, ^(id holder) {
+        ry_queue_lock(self, @selector(addOperation:), NO, ^(id holder) {
             operationArray = [sSelf->_operationSet.allObjects sortedArrayUsingDescriptors:@[[[NSSortDescriptor alloc] initWithKey:NSStringFromSelector(@selector(priority)) ascending:NO]]];
         });
         
@@ -489,7 +511,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
         
         dispatch_apply(operationArray.count, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, kNilOptions), ^(size_t idx) {
             RYOperation *opt = operationArray[idx];
-            opt->_operateDoneBlock = ^{
+            opt->_operationOverBlock = ^{
                 dispatch_semaphore_signal(operate_done_semp);
             };
             dispatch_block_t optBlock = opt->_operationBlock;
@@ -504,26 +526,26 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
             dispatch_semaphore_wait(operate_done_semp, DISPATCH_TIME_FOREVER);
         }];
         
-        ry_lock(sSelf, @selector(status), NO, ^(id holder) {
+        ry_queue_lock(sSelf, @selector(status), NO, ^(id holder) {
             RYQueue *sSelf = holder;
             sSelf.status = kRYQueueStatusDone;
         });
         
-        if (sSelf->_excuteDoneBlock) {
-            sSelf->_excuteDoneBlock(sSelf);
+        if (sSelf->_excutionDoneBlock) {
+            sSelf->_excutionDoneBlock(sSelf);
         }
     });
 }
 
 
 - (void)cancelAllOperation {
-    ry_lock(self, @selector(status), NO, ^(id holder){
+    ry_queue_lock(self, @selector(status), NO, ^(id holder){
         RYQueue *sSelf = holder;
         if (sSelf->_status == kRYQueueStatusDone) {
             return;
         }
         __block NSSet<RYOperation *> *operationSet = nil;
-        ry_lock(sSelf, @selector(addOperation:), NO, ^(id holder) {
+        ry_queue_lock(sSelf, @selector(addOperation:), NO, ^(id holder) {
             RYQueue *sSelf = holder;
             operationSet = [sSelf->_operationSet copy];
         });
@@ -536,13 +558,13 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)suspendAllOperation {
-    ry_lock(self, @selector(status), NO, ^(id holder) {
+    ry_queue_lock(self, @selector(status), NO, ^(id holder) {
         RYQueue *sSelf = holder;
         if (sSelf->_status == kRYQueueStatusDone) {
             return;
         }
         __block NSSet<RYOperation *> *operationSet = nil;
-        ry_lock(sSelf, @selector(addOperation:), NO, ^(id holder) {
+        ry_queue_lock(sSelf, @selector(addOperation:), NO, ^(id holder) {
             RYQueue *sSelf = holder;
             operationSet = [sSelf->_operationSet copy];
         });
@@ -555,13 +577,13 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)resumeAllOperation {
-    ry_lock(self, @selector(status), NO, ^(id holder) {
+    ry_queue_lock(self, @selector(status), NO, ^(id holder) {
         RYQueue *sSelf = holder;
         if (sSelf->_status == kRYQueueStatusDone) {
             return;
         }
         __block NSSet<RYOperation *> *operationSet = nil;
-        ry_lock(sSelf, @selector(addOperation:), NO, ^(id holder) {
+        ry_queue_lock(sSelf, @selector(addOperation:), NO, ^(id holder) {
             RYQueue *sSelf = holder;
             operationSet = [sSelf->_operationSet copy];
         });

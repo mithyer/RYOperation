@@ -5,6 +5,10 @@ It is based on GCD.
 
 How to use -> see [test codes](https://github.com/mithyer/RYOperation/blob/master/RYOperationTests/RYOperationTests.m)
 
+### 1.0.2
+1.增加qos支持
+2.operation完成回调改为无论finish或cancel在结束后都会回调
+
 ### 1.0.1
 1.增加设置queue最大并发处理数方法
 

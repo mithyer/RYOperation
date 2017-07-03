@@ -18,8 +18,16 @@ typedef NS_ENUM(NSInteger, RYOperationPriority) {
     kRYOperationPriorityVeryHigh = 1000,
 };
 
-typedef void (^RYLockedBlock)(id holder);
-extern dispatch_queue_t ry_lock(id holder, const void *lock_key, BOOL async, RYLockedBlock lockedBlock);
+typedef NS_ENUM(NSInteger, RYOperationQos) {
+    kRYOperationQosUnspecified = QOS_CLASS_UNSPECIFIED,
+    kRYOperationQosBackground = QOS_CLASS_BACKGROUND,
+    kRYOperationQosUtility = QOS_CLASS_UTILITY,
+    kRYOperationQosDefault = QOS_CLASS_DEFAULT,
+    kRYOperationQosUserInitiated = QOS_CLASS_USER_INITIATED,
+    kRYOperationQosInteractive = QOS_CLASS_USER_INTERACTIVE
+};
+
+extern dispatch_queue_t ry_lock(id holder, const void *lock_key, BOOL async, qos_class_t qos_class, void (^lockedBlock)(id holder));
 
 @class RYQueue;
 
@@ -48,12 +56,13 @@ typedef NS_OPTIONS(NSUInteger, RYOperationState) {
 - (void)cancel;
 
 @property (nonatomic, copy) NSString *name;
-@property (nonatomic, assign) RYOperationPriority priority;
+@property (nonatomic, assign) RYOperationQos qos;
+@property (nonatomic, assign) RYOperationPriority priority; // in one queue, higher priority opertaion will be started earlier
 @property (nonatomic, assign) dispatch_time_t maximumWaitTimeForOperate;
 @property (nonatomic, assign) dispatch_time_t minimumWaitTimeForOperate;
 @property (nonatomic, strong, readonly) NSSet<RYOperation *> *allDependencies;
 @property (nonatomic, assign, readonly) RYOperationState state;
-@property (nonatomic, copy) dispatch_block_t operationFinishedBlock;
+@property (nonatomic, copy) dispatch_block_t operationDoneBlock; // the state should be kRYOperationStateFinished or kRYOperationStateCancelled
 
 @end
 
@@ -61,10 +70,8 @@ typedef NS_OPTIONS(NSUInteger, RYOperationState) {
 typedef NS_OPTIONS(NSUInteger, RYQueueStatus) {
     kRYQueueStatusNotBegin = 0,
     kRYQueueStatusExcuting = 1,
-    kRYQueueStatusDone = 2 // all operation has finished all cancelled
+    kRYQueueStatusDone = 2 // excuted done
 };
-
-typedef void (^QueueBlock)(RYQueue *queue);
 
 @interface RYQueue : NSObject
 
@@ -73,9 +80,10 @@ typedef void (^QueueBlock)(RYQueue *queue);
 - (void)removeOperation:(RYOperation *)opt;
 
 @property (nonatomic, copy) NSString *name;
+@property (nonatomic, assign) RYOperationQos qos;
 @property (nonatomic, assign) BOOL async;
 @property (nonatomic, assign) NSUInteger maximumConcurrentOperationCount;
-@property (nonatomic, copy) QueueBlock excuteDoneBlock;
+@property (nonatomic, copy) void (^excutionDoneBlock)(RYQueue *queue); // called when all operation has done
 @property (nonatomic, assign, readonly) RYQueueStatus status;
 
 - (NSSet<RYOperation *> *)allOperations;

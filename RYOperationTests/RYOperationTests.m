@@ -13,7 +13,7 @@ static const void *const klogKey = &klogKey;
 static NSMutableArray *s_logArr = nil;
 
 void RYLog(NSString *log) {
-    ry_lock(NSObject.class, klogKey, YES, ^(id holder){
+    ry_lock(NSObject.class, klogKey, YES, QOS_CLASS_DEFAULT, ^(id holder){
         if (nil == s_logArr) {
             s_logArr = [NSMutableArray array];
         }
@@ -22,7 +22,7 @@ void RYLog(NSString *log) {
 }
 
 void RYLogClear() {
-    ry_lock(NSObject.class, klogKey, YES, ^(id holder){
+    ry_lock(NSObject.class, klogKey, YES, QOS_CLASS_DEFAULT, ^(id holder){
         if (nil != s_logArr) {
             [s_logArr removeAllObjects];
         }
@@ -31,7 +31,7 @@ void RYLogClear() {
 
 NSArray<NSString *> *RYGetLog() {
     __block NSArray<NSString *> *logs = nil;
-    ry_lock(NSObject.class, klogKey, NO, ^(id holder){
+    ry_lock(NSObject.class, klogKey, NO, QOS_CLASS_DEFAULT, ^(id holder){
         logs = s_logArr;
     });
     return logs;
@@ -64,7 +64,7 @@ NSArray<NSString *> *RYGetLog() {
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         for (size_t i = 0; i < max; ++i) {
-            ry_lock(NSObject.class, @selector(test_rylock), YES, ^(id holder){
+            ry_lock(NSObject.class, @selector(test_rylock), YES, QOS_CLASS_DEFAULT, ^(id holder){
                 ++t;
             });
         }
@@ -74,7 +74,7 @@ NSArray<NSString *> *RYGetLog() {
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_queue_create(0, 0), ^{
         for (size_t i = 0; i < max; ++i) {
-            ry_lock(NSObject.class, @selector(test_rylock), NO, ^(id holder){
+            ry_lock(NSObject.class, @selector(test_rylock), NO, QOS_CLASS_DEFAULT, ^(id holder){
                 ++t;
             });
         }
@@ -113,7 +113,7 @@ NSArray<NSString *> *RYGetLog() {
         [queue addOperation:opt];
     }
 
-    queue.excuteDoneBlock = ^(RYQueue *queue) {
+    queue.excutionDoneBlock = ^(RYQueue *queue) {
         [expt fulfill];
     };
     [queue excute];
@@ -145,7 +145,7 @@ NSArray<NSString *> *RYGetLog() {
         [queue addOperation:opt];
     }
     
-    queue.excuteDoneBlock = ^(RYQueue *queue) {
+    queue.excutionDoneBlock = ^(RYQueue *queue) {
         [expt fulfill];
     };
     [queue excute];
@@ -177,7 +177,7 @@ NSArray<NSString *> *RYGetLog() {
         [opt addDependency:oneOpt];
         [queue addOperation:opt];
     }
-    queue.excuteDoneBlock = ^(RYQueue *queue) {
+    queue.excutionDoneBlock = ^(RYQueue *queue) {
         [expt fulfill];
     };
     [queue excute];
@@ -238,7 +238,7 @@ NSArray<NSString *> *RYGetLog() {
     }
 
     
-    queue.excuteDoneBlock = ^(RYQueue *queue) {
+    queue.excutionDoneBlock = ^(RYQueue *queue) {
         [expt fulfill];
     };
     [queue excute];
@@ -278,7 +278,7 @@ NSArray<NSString *> *RYGetLog() {
         if (nil == preQueue || arc4random() % 10 < 5) {
             preQueue = [RYQueue queue];
             dispatch_group_enter(group_t);
-            preQueue.excuteDoneBlock = ^(RYQueue *queue) {
+            preQueue.excutionDoneBlock = ^(RYQueue *queue) {
                 dispatch_group_leave(group_t);
             };
             [queues addObject:preQueue];
@@ -328,7 +328,7 @@ NSArray<NSString *> *RYGetLog() {
             [opt addDependency:allDependencies[idx - 1]];
         }
     }];
-    queue.excuteDoneBlock = ^(RYQueue *queue) {
+    queue.excutionDoneBlock = ^(RYQueue *queue) {
         [expt fulfill];
     };
     [queue excute];
@@ -366,12 +366,12 @@ NSArray<NSString *> *RYGetLog() {
 
     
     dispatch_group_enter(group_t);
-    queue1.excuteDoneBlock = ^(RYQueue *queue) {
+    queue1.excutionDoneBlock = ^(RYQueue *queue) {
         dispatch_group_leave(group_t);
     };
     
     dispatch_group_enter(group_t);
-    queue2.excuteDoneBlock = ^(RYQueue *queue) {
+    queue2.excutionDoneBlock = ^(RYQueue *queue) {
         dispatch_group_leave(group_t);
     };
 
@@ -406,7 +406,7 @@ NSArray<NSString *> *RYGetLog() {
     RYQueue *queue = RYQueue.queue;
     [queue addOperation:opt1];
     [queue addOperation:opt2];
-    queue.excuteDoneBlock = ^(RYQueue *queue) {
+    queue.excutionDoneBlock = ^(RYQueue *queue) {
         RYLog(@"done");
         [expt fulfill];
     };
@@ -442,17 +442,17 @@ NSArray<NSString *> *RYGetLog() {
     __block size_t max = 0;
     for (size_t i = 0; i < count; ++i) {
         RYOperation *opt = [RYOperation operationWithBlock:^{
-            ry_lock(NSObject.class, @selector(test_max_concurrent_operation), NO, ^(id holder) {
+            ry_lock(NSObject.class, @selector(test_max_concurrent_operation), NO, QOS_CLASS_DEFAULT, ^(id holder) {
                 ++max;
             });
             RYLog(@(max).stringValue);
-            ry_lock(NSObject.class, @selector(test_max_concurrent_operation), NO, ^(id holder) {
+            ry_lock(NSObject.class, @selector(test_max_concurrent_operation), NO, QOS_CLASS_DEFAULT, ^(id holder) {
                 --max;
             });
         }];
         [queue addOperation:opt];
     }
-    queue.excuteDoneBlock = ^(RYQueue *queue) {
+    queue.excutionDoneBlock = ^(RYQueue *queue) {
         [expt fulfill];
     };
     [queue excute];
