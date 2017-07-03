@@ -1,5 +1,5 @@
 # RYOperation
-The RYOperation class is an abstract class is similar to NSOperation, but with more powerful features and convenient usage.
+The RYOperation class is an abstract class which is similar to NSOperation, withing more powerful features and convenient usage.
 
 It is based on GCD.
 
@@ -7,6 +7,7 @@ How to use -> see [test codes](https://github.com/mithyer/RYOperation/blob/maste
 
 ### 1.0.2
 1.增加qos支持
+
 2.operation完成回调改为无论finish或cancel在结束后都会回调
 
 ### 1.0.1
