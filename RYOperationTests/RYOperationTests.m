@@ -459,13 +459,17 @@ NSArray<NSString *> *RYGetLog() {
     
     [self waitForExpectationsWithTimeout:5 handler:^(NSError * _Nullable error) {
         __block BOOL success = YES;
+        __block BOOL hasReachMax = NO;
         [RYGetLog() enumerateObjectsUsingBlock:^(NSString * _Nonnull log, NSUInteger idx, BOOL * _Nonnull stop) {
+            if (log.integerValue == queue.maximumConcurrentOperationCount) {
+                hasReachMax = YES;
+            }
             if (log.integerValue > queue.maximumConcurrentOperationCount) {
                 success = NO;
                 *stop = YES;
             }
         }];
-        success &= max == 0;
+        success &= (max == 0 && hasReachMax);
         XCTAssert(success);
     }];
 }

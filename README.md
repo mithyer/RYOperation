@@ -5,6 +5,11 @@ It is based on GCD.
 
 How to use -> see [test codes](https://github.com/mithyer/RYOperation/blob/master/RYOperationTests/RYOperationTests.m)
 
+
+基于GCD的仿NSOperation的多线程类，精简的同时增加了一些方法，使用起来更方便，功能上更强大。
+
+通过单元测试了解如何使用^_^ -> [test codes](https://github.com/mithyer/RYOperation/blob/master/RYOperationTests/RYOperationTests.m)
+
 ### 1.0.2
 1.增加qos支持
 
