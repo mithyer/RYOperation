@@ -67,7 +67,7 @@ typedef NS_OPTIONS(NSUInteger, RYOperationState) {
 @end
 
 
-typedef NS_OPTIONS(NSUInteger, RYQueueStatus) {
+typedef NS_ENUM(NSUInteger, RYQueueStatus) {
     kRYQueueStatusNotBegin = 0,
     kRYQueueStatusExcuting = 1,
     kRYQueueStatusDone = 2 // excuted done

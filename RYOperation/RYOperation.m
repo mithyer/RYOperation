@@ -100,15 +100,15 @@ dispatch_queue_t ry_queue_lock(RYQueue *queue, const void *lock_key, BOOL async,
 
 @interface RYOperationRelation : NSObject
 
-@property (nonatomic, weak) RYOperation *superRelation;
-@property (nonatomic, weak) RYOperation *subRelation;
+@property (nonatomic, weak) RYOperation *opt;
+@property (nonatomic, weak) RYOperation *subOpt;
 
 @end
 
 @implementation RYOperationRelation
 
 - (NSUInteger)hash {
-    return _subRelation.hash ^ _superRelation.hash;
+    return _opt.hash ^ _subOpt.hash;
 }
 
 - (BOOL)isEqual:(id)object {
@@ -116,16 +116,16 @@ dispatch_queue_t ry_queue_lock(RYQueue *queue, const void *lock_key, BOOL async,
         return NO;
     }
     RYOperationRelation *relation = (RYOperationRelation *)object;
-    return relation.subRelation == self.subRelation && relation.superRelation == self.superRelation;
+    return relation.opt == self.opt && relation.subOpt == self.subOpt;
 }
 
 - (NSString *)description {
-    return [NSString stringWithFormat:@"<%p, %p>", self.subRelation, self.superRelation];
+    return [NSString stringWithFormat:@"<%p, %p>", self.opt, self.subOpt];
 }
 
 @end
 
-dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *superOpt, RYOperation *subOpt) {
+dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *opt, RYOperation *subOpt) {
     static dispatch_once_t onceToken;
     static NSMapTable<RYOperationRelation *, dispatch_semaphore_t> *table = nil;
     dispatch_once(&onceToken, ^{
@@ -133,15 +133,15 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *superOpt, RYOperation
     });
     static const void *kLockKey = &kLockKey;
     __block dispatch_semaphore_t semph = nil;
-    ry_lock(RYOperationRelation.class, kLockKey, NO, (qos_class_t)superOpt.qos, ^(id holder) {
+    ry_lock(RYOperationRelation.class, kLockKey, NO, (qos_class_t)opt.qos, ^(id holder) {
         RYOperationRelation *relation = [[RYOperationRelation alloc] init];
-        relation.superRelation = superOpt;
-        relation.subRelation = subOpt;
+        relation.opt = opt;
+        relation.subOpt = subOpt;
         semph = [table objectForKey:relation];
         if (nil == semph) {
             semph = dispatch_semaphore_create(0);
             [table setObject:semph forKey:relation];
-            [superOpt.relationSet addObject:relation];
+            [opt.relationSet addObject:relation];
             [subOpt.relationSet addObject:relation];
         }
     });
@@ -162,7 +162,6 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *superOpt, RYOperation
 @implementation RYOperation {
     @private
 
-    NSString* _name;
     RYOperationPriority _priority;
     
     dispatch_queue_t _suspended_queue;
