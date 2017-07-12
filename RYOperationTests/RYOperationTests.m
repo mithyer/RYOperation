@@ -64,7 +64,7 @@ NSArray<NSString *> *RYGetLog() {
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         for (size_t i = 0; i < max; ++i) {
-            ry_lock(NSObject.class, @selector(test_rylock), YES, QOS_CLASS_DEFAULT, ^(id holder){
+            ry_lock(self, @selector(test_rylock), YES, QOS_CLASS_DEFAULT, ^(id holder){
                 ++t;
             });
         }
@@ -74,7 +74,7 @@ NSArray<NSString *> *RYGetLog() {
     dispatch_group_enter(group_t);
     dispatch_async(dispatch_queue_create(0, 0), ^{
         for (size_t i = 0; i < max; ++i) {
-            ry_lock(NSObject.class, @selector(test_rylock), NO, QOS_CLASS_DEFAULT, ^(id holder){
+            ry_lock(self, @selector(test_rylock), NO, QOS_CLASS_DEFAULT, ^(id holder){
                 ++t;
             });
         }
@@ -469,7 +469,7 @@ NSArray<NSString *> *RYGetLog() {
                 *stop = YES;
             }
         }];
-        success &= (max == 0 && hasReachMax);
+        success = success && (max == 0 && hasReachMax);
         XCTAssert(success);
     }];
 }

@@ -90,6 +90,7 @@ dispatch_queue_t ry_queue_lock(RYQueue *queue, const void *lock_key, BOOL async,
     return ry_lock(queue, lock_key, async, (qos_class_t)queue.qos, lockedBlock);
 }
 
+#pragma mark - RYOperationRelation
 
 @class RYOperationRelation;
 @interface RYOperation (Relation)
@@ -193,7 +194,6 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *opt, RYOperation *sub
 + (instancetype)operationWithBlock:(dispatch_block_t)block {
     RYOperation *opt = [[self alloc] init];
     opt->_operationBlock = block;
-    //dispatch_block_create(<#dispatch_block_flags_t flags#>, <#^(void)block#>)
     return opt;
 }
 
@@ -417,12 +417,8 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 
 @implementation RYQueue {
     @protected
-    
-    NSUInteger _identifier;
     BOOL _sync;
-
     NSMutableSet<RYOperation *> *_operationSet;
-    
 }
 
 + (instancetype)queue {
