@@ -504,8 +504,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
         dispatch_semaphore_t excute_max_operation_count_semp = dispatch_semaphore_create(sSelf.maximumConcurrentOperationCount);
         dispatch_queue_t operateQueue = CREATE_DISPATCH_CONCURRENT_QUEUE(sSelf.description);
         
-        dispatch_apply(operationArray.count, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, kNilOptions), ^(size_t idx) {
-            RYOperation *opt = operationArray[idx];
+        [operationArray enumerateObjectsUsingBlock:^(RYOperation * _Nonnull opt, NSUInteger idx, BOOL * _Nonnull stop) {
             opt->_operationOverBlock = ^{
                 dispatch_semaphore_signal(operate_done_semp);
             };
@@ -516,7 +515,8 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
                 dispatch_semaphore_signal(excute_max_operation_count_semp);
             };
             [opt operate];
-        });
+        }];
+
         [operationArray enumerateObjectsUsingBlock:^(RYOperation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
             dispatch_semaphore_wait(operate_done_semp, DISPATCH_TIME_FOREVER);
         }];
