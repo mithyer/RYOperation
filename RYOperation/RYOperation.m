@@ -198,10 +198,7 @@ dispatch_semaphore_t semaphoreForTwoOpetaions(RYOperation *opt, RYOperation *sub
 }
 
 - (void)setState:(RYOperationState)state {
-    NSString *key = NSStringFromSelector(@selector(state));
-    [self willChangeValueForKey:key];
     _state = state;
-    [self didChangeValueForKey:key];
 }
 
 #ifdef RYO_DEPENDENCY_CYCLE_CHECK_ON
@@ -437,10 +434,7 @@ NS_INLINE bool seekCycle(RYOperation *operation, RYOperation *subOperation) {
 }
 
 - (void)setStatus:(RYQueueStatus)status {
-    NSString *key = NSStringFromSelector(@selector(status));
-    [self willChangeValueForKey:key];
     _status = status;
-    [self didChangeValueForKey:key];
 }
 
 - (void)addOperation:(RYOperation *)opt {
